@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["engine", "games/sandbox", "games/mushroom_man", "games/walkaround_demo", "games/physics-sandbox"]
+members = ["engine", "games/sandbox", "games/mushroom_man", "games/walkaround_demo", "games/physics-sandbox", "tools/oxc_scripts"]
 
 [workspace.dependencies]
 sdl2 = { version = "0.37" }

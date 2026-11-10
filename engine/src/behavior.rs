@@ -1,3 +1,4 @@
+#[cfg(feature = "legacy-pss")]
 use crate::script::{Host, Interpreter, ScriptError, Value};
 
 /// What a script (or a native Rust `Behavior`) can do to the entity it's
@@ -72,10 +73,12 @@ pub struct BehaviorSlot(pub Box<dyn Behavior>);
 /// A `Behavior` backed by a compiled script. Bridges the interpreter's
 /// generic `Host` mechanism to the concrete `ScriptApi` for this entity —
 /// see `HostAdapter` below for the exact function names a script can call.
+#[cfg(feature = "legacy-pss")]
 pub struct ScriptBehavior {
     interpreter: Interpreter,
 }
 
+#[cfg(feature = "legacy-pss")]
 impl ScriptBehavior {
     pub fn from_source(source: &str) -> Result<Self, Vec<ScriptError>> {
         Ok(Self { interpreter: Interpreter::compile(source)? })
@@ -93,6 +96,7 @@ impl ScriptBehavior {
     }
 }
 
+#[cfg(feature = "legacy-pss")]
 impl Behavior for ScriptBehavior {
     fn on_ready(&mut self, api: &mut dyn ScriptApi) {
         self.dispatch("ready", &[], api);
@@ -124,10 +128,12 @@ impl Behavior for ScriptBehavior {
 /// `camera_shake(intensity,duration)`. `Value` has no vector/tuple type, so
 /// position is read as three separate scalar calls rather than one call
 /// returning a triple.
+#[cfg(feature = "legacy-pss")]
 struct HostAdapter<'a> {
     api: &'a mut dyn ScriptApi,
 }
 
+#[cfg(feature = "legacy-pss")]
 impl Host for HostAdapter<'_> {
     fn call_native(&mut self, name: &str, args: &[Value]) -> Result<Value, ScriptError> {
         fn num(args: &[Value], index: usize, fn_name: &str) -> Result<f32, ScriptError> {
