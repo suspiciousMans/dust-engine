@@ -54,6 +54,7 @@ impl Default for Transform {
 
 /// Shared handles so one loaded mesh/texture can back many entities without
 /// re-uploading GPU resources per instance.
+#[derive(Clone)]
 pub struct MeshRenderer {
     pub mesh: Arc<GpuMesh>,
     pub texture: Option<Arc<GpuTexture>>,
@@ -141,4 +142,105 @@ impl Default for PlayerController {
             interact_impulse: 6.0,
         }
     }
+}
+
+/// Describes the engine's own components to the editor inspector
+/// (see `editor::inspector`). Add new inspectable components here.
+pub fn register_engine_components(reg: &mut crate::editor::inspector::Registry) {
+    use crate::editor::inspector::ComponentBuilder;
+
+    reg.register(
+        ComponentBuilder::new("Transform", Transform::default)
+            .not_removable()
+            .vec3("position", |t| t.position, |t, v| t.position = v)
+            .tooltip("World-space position")
+            .vec3(
+                "rotation",
+                |t| {
+                    let (x, y, z) = t.rotation.to_euler(EulerRot::XYZ);
+                    Vec3::new(x.to_degrees(), y.to_degrees(), z.to_degrees())
+                },
+                |t, v| t.rotation = euler_deg_to_quat(v),
+            )
+            .tooltip("Euler angles in degrees (XYZ)")
+            .vec3("scale", |t| t.scale, |t, v| t.scale = v),
+    );
+    reg.register(
+        ComponentBuilder::new("Camera", Camera::default)
+            .f32("fov_y_degrees", |c| c.fov_y_radians.to_degrees(), |c, v| c.fov_y_radians = v.to_radians())
+            .range(1.0, 179.0)
+            .tooltip("Vertical field of view")
+            .f32("near", |c| c.near, |c, v| c.near = v)
+            .range(0.001, 100.0)
+            .speed(0.01)
+            .f32("far", |c| c.far, |c, v| c.far = v)
+            .range(1.0, 100000.0)
+            .speed(1.0),
+    );
+    reg.register(
+        ComponentBuilder::new("Light", || Light {
+            color: Vec3::ONE,
+            intensity: 1.0,
+            kind: LightKind::Point { range: 10.0 },
+            is_static: false,
+        })
+        .color("color", |l| l.color.to_array(), |l, v| l.color = Vec3::from(v))
+        .f32("intensity", |l| l.intensity, |l, v| l.intensity = v)
+        .range(0.0, 100.0)
+        .enumeration(
+            "kind",
+            &["Directional", "Point"],
+            |l| matches!(l.kind, LightKind::Point { .. }) as usize,
+            |l, i| {
+                l.kind = if i == 0 {
+                    LightKind::Directional { direction: Vec3::new(0.0, -1.0, -0.3).normalize() }
+                } else {
+                    LightKind::Point { range: 10.0 }
+                }
+            },
+        )
+        .tooltip("Switching kind resets direction/range to defaults")
+        .f32(
+            "range",
+            |l| match l.kind {
+                LightKind::Point { range } => range,
+                _ => 0.0,
+            },
+            |l, v| {
+                if let LightKind::Point { range } = &mut l.kind {
+                    *range = v;
+                }
+            },
+        )
+        .range(0.0, 1000.0)
+        .tooltip("Point lights only")
+        .vec3(
+            "direction",
+            |l| match l.kind {
+                LightKind::Directional { direction } => direction,
+                _ => Vec3::ZERO,
+            },
+            |l, v| {
+                if let LightKind::Directional { direction } = &mut l.kind {
+                    *direction = v;
+                }
+            },
+        )
+        .tooltip("Directional lights only")
+        .bool("is_static", |l| l.is_static, |l, v| l.is_static = v)
+        .tooltip("Baked into static lighting"),
+    );
+    reg.register(
+        ComponentBuilder::new("PlayerController", PlayerController::default)
+            .f32("move_speed", |p| p.move_speed, |p, v| p.move_speed = v)
+            .range(0.0, 50.0)
+            .f32("jump_speed", |p| p.jump_speed, |p, v| p.jump_speed = v)
+            .range(0.0, 50.0)
+            .f32("interact_radius", |p| p.interact_radius, |p, v| p.interact_radius = v)
+            .range(0.0, 20.0)
+            .f32("interact_impulse", |p| p.interact_impulse, |p, v| p.interact_impulse = v)
+            .range(0.0, 100.0),
+    );
+    reg.register_cloneable::<MeshRenderer>();
+    reg.register_cloneable::<LevelObjectMeta>();
 }
