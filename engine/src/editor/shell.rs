@@ -12,7 +12,8 @@ use hecs::{Entity, World};
 use super::camera::{camera_key, CameraInput, EditorCamera};
 use super::console::Console;
 use super::prefs::{self, EditorPrefs};
-use super::state::{EditorState, KeymapPreset};
+use super::scene_io::{LevelSceneIo, RegistrySnapshot, SceneIo, SceneSnapshot};
+use super::state::{EditorAction, EditorMode, EditorState, KeymapPreset, Tool};
 use super::ui::{draw_hierarchy, draw_inspector};
 use crate::ecs::Transform;
 use crate::ui::dock_skeleton::{self, EditorTab, LayoutPreset};
@@ -78,7 +79,32 @@ pub struct PerfSnapshot {
     pub draw_calls: u32,
 }
 
+/// Things the host may need to react to, drained with [`EditorShell::take_events`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShellEvent {
+    PlayStarted,
+    Paused,
+    Resumed,
+    /// Play stopped and the scene snapshot (if any) was restored.
+    Stopped { restored: bool },
+    SceneNew,
+    SceneOpened(std::path::PathBuf),
+    SceneSaved(std::path::PathBuf),
+}
+
+/// Pending File > Open / Save As path prompt.
+#[derive(Clone, Debug)]
+struct PathPrompt {
+    save: bool,
+    buffer: String,
+}
+
 pub struct EditorShell {
+    pub snapshot: Box<dyn SceneSnapshot>,
+    pub scene_io: Box<dyn SceneIo>,
+    events: Vec<ShellEvent>,
+    prompt: Option<PathPrompt>,
+    show_about: bool,
     pub dock: DockState<EditorTab>,
     pub prefs: EditorPrefs,
     pub host_tabs: Vec<String>,
@@ -93,6 +119,11 @@ impl EditorShell {
     pub fn new(host_tabs: Vec<String>) -> Self {
         let prefs = EditorPrefs::default();
         Self {
+            snapshot: Box::new(RegistrySnapshot::default()),
+            scene_io: Box::new(LevelSceneIo::default()),
+            events: Vec::new(),
+            prompt: None,
+            show_about: false,
             dock: dock_skeleton::build_layout(prefs.layout_preset, &host_tabs),
             prefs,
             host_tabs,
@@ -135,6 +166,249 @@ impl EditorShell {
         self.dock = dock_skeleton::build_layout(p, &self.host_tabs);
     }
 
+    pub fn take_events(&mut self) -> Vec<ShellEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    // ---- play control: snapshot on Play, restore on Stop
+
+    pub fn play(&mut self, editor: &mut EditorState, world: &World) {
+        if editor.mode == EditorMode::Edit {
+            self.snapshot.capture(world, &editor.registry);
+            editor.play();
+            self.events.push(ShellEvent::PlayStarted);
+        }
+    }
+
+    pub fn toggle_pause(&mut self, editor: &mut EditorState) {
+        let before = editor.mode;
+        editor.toggle_pause();
+        match (before, editor.mode) {
+            (EditorMode::Play, EditorMode::Pause) => self.events.push(ShellEvent::Paused),
+            (EditorMode::Pause, EditorMode::Play) => self.events.push(ShellEvent::Resumed),
+            _ => {}
+        }
+    }
+
+    pub fn stop(&mut self, editor: &mut EditorState, world: &mut World) {
+        if editor.mode == EditorMode::Edit {
+            return;
+        }
+        editor.stop();
+        let restored = self.snapshot.restore(world, &editor.registry);
+        self.snapshot.discard();
+        editor.selection.prune(world);
+        self.events.push(ShellEvent::Stopped { restored });
+    }
+
+    /// Play/Stop toggle used by the host's F3 key.
+    pub fn toggle_play(&mut self, editor: &mut EditorState, world: &mut World) {
+        if editor.is_editing() {
+            self.play(editor, world)
+        } else {
+            self.stop(editor, world)
+        }
+    }
+
+    // ---- scene file operations (Edit mode only; results go to the console)
+
+    pub fn new_scene(&mut self, editor: &mut EditorState, world: &mut World) {
+        if !editor.is_editing() {
+            return;
+        }
+        match self.scene_io.new_scene(world) {
+            Ok(()) => {
+                editor.selection.clear();
+                editor.undo.clear();
+                self.console.info("new scene");
+                self.events.push(ShellEvent::SceneNew);
+            }
+            Err(e) => self.console.error(e),
+        }
+    }
+
+    pub fn open_scene(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) {
+        if !editor.is_editing() {
+            return;
+        }
+        match self.scene_io.open(path, world) {
+            Ok(()) => {
+                editor.selection.clear();
+                editor.undo.clear();
+                self.console.info(format!("opened {}", path.display()));
+                self.events.push(ShellEvent::SceneOpened(path.to_path_buf()));
+            }
+            Err(e) => self.console.error(e),
+        }
+    }
+
+    pub fn save_scene(&mut self, world: &World, path: &std::path::Path) {
+        match self.scene_io.save(world, path) {
+            Ok(()) => {
+                self.console.info(format!("saved {}", path.display()));
+                self.events.push(ShellEvent::SceneSaved(path.to_path_buf()));
+            }
+            Err(e) => self.console.error(e),
+        }
+    }
+
+    /// File > Save: current path, or prompts when there is none.
+    pub fn save_current(&mut self, world: &World) {
+        match self.scene_io.current_path().map(|p| p.to_path_buf()) {
+            Some(p) => self.save_scene(world, &p),
+            None => self.prompt = Some(PathPrompt { save: true, buffer: "level.ron".into() }),
+        }
+    }
+
+    fn menu_bar(&mut self, ctx: &egui::Context, editor: &mut EditorState, world: &mut World) {
+        egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("New Scene").clicked() {
+                        self.new_scene(editor, world);
+                        ui.close_menu();
+                    }
+                    if ui.button("Open...").clicked() {
+                        self.prompt = Some(PathPrompt { save: false, buffer: String::new() });
+                        ui.close_menu();
+                    }
+                    if ui.button("Save").clicked() {
+                        self.save_current(world);
+                        ui.close_menu();
+                    }
+                    if ui.button("Save As...").clicked() {
+                        let cur = self.scene_io.current_path().map(|p| p.display().to_string()).unwrap_or_default();
+                        self.prompt = Some(PathPrompt { save: true, buffer: cur });
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Edit", |ui| {
+                    let mut act = None;
+                    for (label, a) in [
+                        ("Undo", EditorAction::Undo),
+                        ("Redo", EditorAction::Redo),
+                        ("Duplicate", EditorAction::Duplicate),
+                        ("Delete", EditorAction::Delete),
+                        ("Select All", EditorAction::SelectAll),
+                        ("Deselect All", EditorAction::DeselectAll),
+                    ] {
+                        if ui.add_enabled(editor.is_editing(), egui::Button::new(label)).clicked() {
+                            act = Some(a);
+                            ui.close_menu();
+                        }
+                    }
+                    if let Some(a) = act {
+                        editor.perform(world, a);
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    for tab in EditorTab::BUILTIN.iter().cloned().chain(self.host_tabs.iter().cloned().map(EditorTab::Host)) {
+                        let open = dock_skeleton::contains_tab(&self.dock, &tab);
+                        let mut v = open;
+                        if tab != EditorTab::Viewport && ui.checkbox(&mut v, tab.title()).clicked() {
+                            dock_skeleton::toggle_tab(&mut self.dock, &tab);
+                        }
+                    }
+                    ui.separator();
+                    ui.menu_button("Layout", |ui| {
+                        for p in LayoutPreset::ALL {
+                            if ui.selectable_label(self.prefs.layout_preset == p, p.label()).clicked() {
+                                self.apply_preset(p);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Keyboard shortcuts").clicked() {
+                        self.show_about = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+    }
+
+    fn toolbar(&mut self, ctx: &egui::Context, editor: &mut EditorState, world: &mut World) {
+        egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let mode = editor.mode;
+                let playing = mode != EditorMode::Edit;
+                if ui.add_enabled(!playing, egui::Button::new("Play")).clicked() {
+                    self.play(editor, world);
+                }
+                let pause_label = if mode == EditorMode::Pause { "Resume" } else { "Pause" };
+                if ui.add_enabled(playing, egui::Button::new(pause_label)).clicked() {
+                    self.toggle_pause(editor);
+                }
+                if ui.add_enabled(playing, egui::Button::new("Stop")).clicked() {
+                    self.stop(editor, world);
+                }
+                ui.separator();
+                for (t, label) in [(Tool::Move, "Move"), (Tool::Rotate, "Rotate"), (Tool::Scale, "Scale")] {
+                    if ui.selectable_label(editor.tool == t, label).clicked() {
+                        editor.tool = t;
+                    }
+                }
+                ui.separator();
+                ui.weak(match mode {
+                    EditorMode::Edit => "Edit",
+                    EditorMode::Play => "Playing",
+                    EditorMode::Pause => "Paused",
+                });
+                if let Some(e) = &editor.last_error {
+                    ui.colored_label(egui::Color32::from_rgb(235, 90, 80), e);
+                }
+            });
+        });
+    }
+
+    fn windows(&mut self, ctx: &egui::Context, editor: &mut EditorState, world: &mut World) {
+        if let Some(mut pr) = self.prompt.take() {
+            let mut keep = true;
+            let mut submit = false;
+            egui::Window::new(if pr.save { "Save Scene As" } else { "Open Scene" })
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    let r = ui.add(egui::TextEdit::singleline(&mut pr.buffer).hint_text("path/to/level.ron").desired_width(320.0));
+                    ui.horizontal(|ui| {
+                        submit = ui.button(if pr.save { "Save" } else { "Open" }).clicked()
+                            || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                        if ui.button("Cancel").clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+            if submit && !pr.buffer.trim().is_empty() {
+                let path = std::path::PathBuf::from(pr.buffer.trim());
+                if pr.save {
+                    self.save_scene(world, &path);
+                } else {
+                    self.open_scene(editor, world, &path);
+                }
+            } else if keep {
+                self.prompt = Some(pr);
+            }
+        }
+        if self.show_about {
+            egui::Window::new("Keyboard shortcuts").open(&mut self.show_about).show(ctx, |ui| {
+                match self.prefs.keymap {
+                    KeymapPreset::Unity => {
+                        ui.label("W/E/R  tools    Ctrl+D duplicate    Del delete    F2 rename");
+                        ui.label("Viewport: hold RMB + WASD/QE fly, Alt+LMB orbit, MMB pan, wheel zoom, F frame");
+                    }
+                    KeymapPreset::Blender => {
+                        ui.label("G/R/S  tools    Shift+D duplicate    X delete    A select all");
+                        ui.label("Viewport: MMB orbit, Shift+MMB pan, wheel zoom, numpad 1/3/7 views, . frame");
+                    }
+                }
+                ui.label("Ctrl+Z undo    Ctrl+Shift+Z redo    F3 play/stop");
+            });
+        }
+    }
+
     pub fn layout_ron(&self) -> Result<String, String> {
         dock_skeleton::layout_to_ron(&self.dock)
     }
@@ -164,6 +438,10 @@ impl EditorShell {
         }
         editor.keymap = self.prefs.keymap;
         super::ui::handle_shortcuts(ctx, editor, world);
+
+        self.menu_bar(ctx, editor, world);
+        self.toolbar(ctx, editor, world);
+        self.windows(ctx, editor, world);
 
         let style = dock_skeleton::dock_style(&self.prefs.theme, &ctx.style());
         let mut viewer = ShellViewer {
@@ -443,6 +721,60 @@ mod tests {
             assert!(shell.viewport.rect.is_some(), "{p:?}");
             assert!(shell.viewport.size_px[0] > 100);
         }
+    }
+
+    #[test]
+    fn play_pause_stop_restores_world_and_emits_events() {
+        use crate::editor::hierarchy::Name;
+        let mut shell = EditorShell::new(vec![]);
+        let mut editor = EditorState::new();
+        let mut world = World::new();
+        let e = world.spawn((Name("a".into()), Transform::from_position(Vec3::ONE)));
+        shell.stop(&mut editor, &mut world); // no-op in Edit
+        assert!(shell.take_events().is_empty());
+
+        shell.play(&mut editor, &world);
+        assert_eq!(editor.mode, EditorMode::Play);
+        world.get::<&mut Transform>(e).unwrap().position = Vec3::splat(50.0);
+        world.spawn((Name("tmp".into()),));
+        shell.toggle_pause(&mut editor);
+        assert_eq!(editor.mode, EditorMode::Pause);
+        shell.toggle_pause(&mut editor);
+        shell.stop(&mut editor, &mut world);
+        assert_eq!(editor.mode, EditorMode::Edit);
+        assert_eq!(world.len(), 1);
+        assert_eq!(world.get::<&Transform>(e).unwrap().position, Vec3::ONE);
+        assert_eq!(
+            shell.take_events(),
+            vec![ShellEvent::PlayStarted, ShellEvent::Paused, ShellEvent::Resumed, ShellEvent::Stopped { restored: true }]
+        );
+        shell.toggle_play(&mut editor, &mut world);
+        assert!(!editor.is_editing());
+        shell.toggle_play(&mut editor, &mut world);
+        assert!(editor.is_editing());
+    }
+
+    #[test]
+    fn scene_files_via_shell_report_to_console() {
+        let dir = std::env::temp_dir().join(format!("jame_shellio_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.ron");
+        let mut shell = EditorShell::new(vec![]);
+        let mut editor = EditorState::new();
+        let mut world = World::new();
+        editor.spawn(&mut world, crate::editor::command::SpawnSpec::primitive(crate::editor::hierarchy::PrimitiveShape::Cube, None));
+        shell.save_scene(&world, &path);
+        shell.new_scene(&mut editor, &mut world);
+        assert_eq!(world.len(), 0);
+        shell.open_scene(&mut editor, &mut world, &path);
+        assert_eq!(world.len(), 1);
+        shell.open_scene(&mut editor, &mut world, &dir.join("missing.ron"));
+        assert_eq!(shell.console.count(crate::editor::console::LogLevel::Error), 1);
+        // Open is refused while playing.
+        shell.play(&mut editor, &world);
+        shell.new_scene(&mut editor, &mut world);
+        assert_eq!(world.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
