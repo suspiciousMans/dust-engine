@@ -1,5 +1,4 @@
 use engine::ui::output::OutputPanel;
-use std::path::PathBuf;
 
 #[test]
 fn test_output_panel_appends_lines() {

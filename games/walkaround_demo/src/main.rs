@@ -112,22 +112,6 @@ fn default_demo_profiles() -> Vec<ShaderProfile> {
 /// instead of hardcoded ECS spawns — plus a static floor so Play mode has
 /// something for the (now dynamic) cubes to fall onto.
 fn default_level() -> Level {
-    let make_cube = |name: &str, x: f32| LevelObject {
-        name: name.to_string(),
-        mesh: MeshSource::ObjFile(PathBuf::from("assets/models/test_scene.obj")),
-        texture_path: Some(PathBuf::from("assets/textures/test_diffuse.png")),
-        position: [x, 1.2, 0.0],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        scale: [1.0, 1.0, 1.0],
-        is_dynamic: true,
-        is_trigger: false,
-        animation: None,
-        script: None,
-        class: None,
-        level_transition: None,
-        screen_effect: None,
-        camera_shake: None,
-    };
 
     let floor = LevelObject {
         name: "Floor".to_string(),
@@ -153,25 +137,6 @@ fn default_level() -> Level {
     // Static (no RigidBody) but animated — demonstrates that an animated
     // object with no physics still moves under its own motion, purely
     // decorative here since nothing touches it.
-    let orbiting_cube = LevelObject {
-        name: "Orbiting Cube".to_string(),
-        mesh: MeshSource::Primitive(PrimitiveKind::Cube),
-        texture_path: Some(PathBuf::from("assets/textures/test_diffuse.png")),
-        position: [0.0, 3.0, -2.0],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        scale: [0.6, 0.6, 0.6],
-        is_dynamic: false,
-        is_trigger: false,
-        animation: Some(AnimationSpec::Orbit {
-            axis: [0.0, 1.0, 0.0],
-            speed_deg_per_sec: 90.0,
-        }),
-        script: None,
-        class: None,
-        level_transition: None,
-        screen_effect: None,
-        camera_shake: None,
-    };
 
     let demo_light = LevelLight {
         name: "Light 1".to_string(),
@@ -184,96 +149,15 @@ fn default_level() -> Level {
 
     // Sits in the player's path between the Play-mode spawn point and the
     // cubes, so walking forward demonstrates trigger enter/exit for free.
-    let trigger = LevelObject {
-        name: "Trigger Zone".to_string(),
-        mesh: MeshSource::Primitive(PrimitiveKind::Cube),
-        texture_path: None,
-        position: [0.0, 1.0, 2.5],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        scale: [1.5, 1.0, 1.5],
-        is_dynamic: false,
-        is_trigger: true,
-        animation: None,
-        script: None,
-        class: None,
-        level_transition: None,
-        // A quick cyan flash matching the trigger's own render color —
-        // demonstrates screen effects the moment a player reaches Play
-        // mode's first trigger, no extra geometry needed.
-        screen_effect: Some(ScreenEffectSpec {
-            color: [0.2, 0.8, 1.0],
-            strength: 0.5,
-            fade_in_secs: 0.05,
-            hold_secs: 0.05,
-            fade_out_secs: 0.35,
-        }),
-        // A light rumble alongside the flash — demonstrates camera shake
-        // the same free way the flash demonstrates screen effects.
-        camera_shake: Some(CameraShakeSpec {
-            intensity: 0.06,
-            duration_secs: 0.3,
-        }),
-    };
 
     // Bobs via `scripts/bob_demo.pss` — stands next to the compiled-in
     // "Native Behavior Cube" (see `spawn_native_behavior_demo`) so
     // interacting with both makes the script/Rust parity concrete.
-    let script_demo_cube = LevelObject {
-        name: "Script Demo Cube".to_string(),
-        mesh: MeshSource::Primitive(PrimitiveKind::Cube),
-        texture_path: Some(PathBuf::from("assets/textures/test_diffuse.png")),
-        position: [-2.4, 1.0, -2.0],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        scale: [0.6, 0.6, 0.6],
-        is_dynamic: false,
-        is_trigger: false,
-        animation: None,
-        script: Some(PathBuf::from("scripts/bob_demo.pss")),
-        class: None,
-        level_transition: None,
-        screen_effect: None,
-        camera_shake: None,
-    };
 
     // Past the demo cubes/rig, in the player's forward path — demonstrates
     // level transitions: walking in loads "second_room" and lands the
     // player just inside its own "Return" trigger (see `second_room_level`).
-    let level_exit = LevelObject {
-        name: "Level Exit".to_string(),
-        mesh: MeshSource::Primitive(PrimitiveKind::Cube),
-        texture_path: None,
-        position: [0.0, 1.0, -4.5],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        scale: [1.5, 1.0, 1.5],
-        is_dynamic: false,
-        is_trigger: true,
-        animation: None,
-        script: None,
-        class: None,
-        level_transition: Some(LevelTransition {
-            target_level: "second_room".to_string(),
-            spawn_position: [0.0, 1.0, 1.5],
-            spawn_yaw_deg: 0.0,
-        }),
-        // A quick white flash makes the level swap read as a proper
-        // "portal" transition rather than an abrupt cut.
-        screen_effect: Some(ScreenEffectSpec {
-            color: [1.0, 1.0, 1.0],
-            strength: 0.7,
-            fade_in_secs: 0.05,
-            hold_secs: 0.05,
-            fade_out_secs: 0.3,
-        }),
-        camera_shake: None,
-    };
 
-    let humanoid_instance = RigInstance {
-        name: "Humanoid".to_string(),
-        rig_path: PathBuf::from("rigs/humanoid.ron"),
-        position: [3.2, 1.5, -2.0],
-        rotation_euler_deg: [0.0, 0.0, 0.0],
-        playing_clip: Some("Wave".to_string()),
-    };
 
     // Two instances of the "barrel" class — demonstrates the class/family
     // system: mesh/texture/scale/physics all come from `classes/barrel.ron`
@@ -308,22 +192,6 @@ fn default_level() -> Level {
     // A minimal demo touch for the character/AI system, matching every
     // other feature's presence here — a `Passive` critter that wanders
     // near the cubes and flees if the player approaches.
-    let wanderer = CharacterInstance {
-        name: "Wanderer".to_string(),
-        position: [2.5, 1.0, -1.0],
-        scale: [0.6, 0.6, 0.6],
-        color: [0.3, 0.8, 0.4],
-        texture_path: None,
-        disposition: Disposition::Passive,
-        move_speed: 2.0,
-        wander_radius: 2.5,
-        sight_range: 4.0,
-        max_health: None,
-        damage: None,
-        attack_range: 1.0,
-        attack_cooldown_secs: 1.0,
-        dialogue_nodes: Vec::new(),
-    };
 
     Level {
         name: "default".to_string(),

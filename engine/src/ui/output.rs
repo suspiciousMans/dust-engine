@@ -71,7 +71,6 @@ fn scan_dir(dir: &Path, extensions: &[&str], results: &mut Vec<std::path::PathBu
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn test_scan_for_files_lists_files_from_real_directory() {
