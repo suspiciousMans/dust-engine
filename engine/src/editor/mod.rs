@@ -7,6 +7,9 @@
 
 pub mod camera;
 pub mod command;
+pub mod console;
+pub mod prefs;
+pub mod shell;
 pub mod hierarchy;
 pub mod inspector;
 pub mod selection;
