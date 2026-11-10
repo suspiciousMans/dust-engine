@@ -9,6 +9,7 @@ pub mod camera;
 pub mod command;
 pub mod console;
 pub mod prefs;
+pub mod scene_io;
 pub mod shell;
 pub mod hierarchy;
 pub mod inspector;
