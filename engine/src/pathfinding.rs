@@ -35,10 +35,10 @@ impl NavGrid {
             .iter()
             .filter(|(_, (_, collider))| !collider.is_trigger)
             .filter_map(|(_, (transform, collider))| {
-                let (half_x, half_y, half_z) = match collider.shape {
-                    ColliderShape::Aabb { half_extents } => (half_extents.x, half_extents.y, half_extents.z),
-                    ColliderShape::Sphere { radius } => (radius, radius, radius),
-                };
+                // World-space bounds so oriented boxes and capsules are covered too.
+                let (lo, hi) = crate::physics::shape_bounds(collider.shape, crate::physics::Pose::from(transform));
+                let half = (hi - lo) * 0.5;
+                let (half_x, half_y, half_z) = (half.x, half.y, half.z);
                 if half_y < MIN_OBSTRUCTION_HEIGHT {
                     return None;
                 }

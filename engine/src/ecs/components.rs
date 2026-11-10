@@ -243,4 +243,5 @@ pub fn register_engine_components(reg: &mut crate::editor::inspector::Registry) 
     );
     reg.register_cloneable::<MeshRenderer>();
     reg.register_cloneable::<LevelObjectMeta>();
+    crate::physics::register_physics_components(reg);
 }
