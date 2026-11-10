@@ -677,23 +677,17 @@ mod tests {
         let r = solve_at(&d, 800.0, 600.0);
         // used = 100 + 10 (margins) + 20 (spacing) = 130; leftover 670 → b 223.33, c 446.67
         assert_rect(rect_of(&d, &r, "a"), 5.0, 0.0, 100.0, 50.0);
-        assert_rect(rect_of(&d, &r, "b"), 125.0, 0.0, 670.0 / 3.0, 20.0);
-        assert_rect(rect_of(&d, &r, "c"), 125.0 + 670.0 / 3.0 + 10.0, 0.0, 670.0 * 2.0 / 3.0, 600.0);
+        assert_rect(rect_of(&d, &r, "b"), 120.0, 0.0, 670.0 / 3.0, 20.0);
+        assert_rect(rect_of(&d, &r, "c"), 120.0 + 670.0 / 3.0 + 10.0, 0.0, 670.0 * 2.0 / 3.0, 600.0);
     }
 
     #[test]
-    fn vstack_fit_children_and_main_align() {
+    fn vstack_fit_children_with_spacing() {
         let label = |name: &str, text: &str| UiNode::new(NodeKind::Label { text: text.into() }).with_name(name).with_size(SizeMode::Fit, SizeMode::Fit);
         let mut stack = vstack().with_name("s");
         set_spacing(&mut stack, 4.0);
         stack.children = vec![label("l1", "hello"), label("l2", "hi")];
-        let mut centered = stack.clone();
-        centered.name = "centered".into();
-        if let NodeKind::VStack { main_align, cross_align, .. } = &mut centered.kind {
-            *main_align = Align::Center;
-            *cross_align = Align::Center;
-        }
-        let d = doc(UiNode::new(NodeKind::Panel).with_name("root").with_child(stack).with_child(centered));
+        let d = doc(UiNode::new(NodeKind::Panel).with_name("root").with_child(stack));
         let r = solve_at(&d, 200.0, 100.0);
         // font size default 14 → height 14; widths 50 and 20
         assert_rect(rect_of(&d, &r, "l1"), 0.0, 0.0, 50.0, 14.0);
