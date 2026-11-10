@@ -12,12 +12,14 @@ pub use protocol::{
     PROTOCOL_VERSION,
 };
 
-use framing::NetConnection;
+/// Length-prefixed bincode framing over a non-blocking `TcpStream`, for
+/// games with their own message types (Dreamscape's co-op).
+pub use framing::NetConnection;
 
 pub const DEFAULT_PORT: u16 = 7777;
 /// Total players including the host — a `NetHost` accepts at most
 /// `MAX_PLAYERS - 1` remote connections.
-pub const MAX_PLAYERS: usize = 4;
+pub const MAX_PLAYERS: usize = 5;
 pub const SNAPSHOT_RATE_HZ: f32 = 20.0;
 /// How long an accepted-but-not-yet-`Hello`'d connection may sit in
 /// `NetHost::pending` before it's dropped. Without this, a peer that
@@ -120,9 +122,11 @@ impl NetHost {
         for (accepted_at, mut conn) in pending {
             let messages: Vec<ClientMessage> = conn.pump();
             let hello = messages.into_iter().find_map(|msg| match msg {
-                ClientMessage::Hello { player_name, protocol_version, appearance } => {
-                    Some((player_name, protocol_version, appearance))
-                }
+                ClientMessage::Hello {
+                    player_name,
+                    protocol_version,
+                    appearance,
+                } => Some((player_name, protocol_version, appearance)),
                 _ => None,
             });
 
@@ -146,14 +150,23 @@ impl NetHost {
                 continue;
             }
             if self.connections.len() + 1 >= MAX_PLAYERS {
-                conn.send(&ServerMessage::Reject { reason: "server is full".to_string() });
+                conn.send(&ServerMessage::Reject {
+                    reason: "server is full".to_string(),
+                });
                 let _: Vec<ClientMessage> = conn.pump();
                 continue;
             }
 
             let net_id = self.allocate_net_id();
             log::info!("player '{player_name}' joined as {net_id:?}");
-            self.connections.insert(net_id, PeerConnection { conn, name: player_name.clone(), appearance: appearance.clone() });
+            self.connections.insert(
+                net_id,
+                PeerConnection {
+                    conn,
+                    name: player_name.clone(),
+                    appearance: appearance.clone(),
+                },
+            );
             newly_joined.push((net_id, player_name, appearance));
         }
 
@@ -170,10 +183,26 @@ impl NetHost {
             let messages: Vec<ClientMessage> = peer.conn.pump();
             for msg in messages {
                 match msg {
-                    ClientMessage::Input { move_dir, yaw_deg, pitch_deg, jump, .. } => {
-                        inputs.push((net_id, InputState { move_dir, yaw_deg, pitch_deg, jump }));
+                    ClientMessage::Input {
+                        move_dir,
+                        yaw_deg,
+                        pitch_deg,
+                        jump,
+                        ..
+                    } => {
+                        inputs.push((
+                            net_id,
+                            InputState {
+                                move_dir,
+                                yaw_deg,
+                                pitch_deg,
+                                jump,
+                            },
+                        ));
                     }
-                    ClientMessage::Interact { target } => self.pending_interacts.push((net_id, target)),
+                    ClientMessage::Interact { target } => {
+                        self.pending_interacts.push((net_id, target))
+                    }
                     ClientMessage::DialogueChoice { speaker, index } => {
                         self.pending_dialogue_choices.push((net_id, speaker, index));
                     }
@@ -274,7 +303,9 @@ impl NetHost {
     /// path, if any — used to catch a newly-joined client up on every
     /// already-connected peer's appearance via `PlayerJoined`.
     pub fn player_appearance(&self, net_id: NetId) -> Option<&Path> {
-        self.connections.get(&net_id).and_then(|peer| peer.appearance.as_deref())
+        self.connections
+            .get(&net_id)
+            .and_then(|peer| peer.appearance.as_deref())
     }
 
     /// Every currently-connected remote player's `NetId` — used to catch a
@@ -303,11 +334,25 @@ impl NetClient {
     /// (including the locally-chosen `appearance`, if any — see
     /// `ClientMessage::Hello`) and switches to non-blocking for the rest
     /// of the session.
-    pub fn connect(addr: SocketAddr, name: String, appearance: Option<PathBuf>, timeout: Duration) -> io::Result<Self> {
+    pub fn connect(
+        addr: SocketAddr,
+        name: String,
+        appearance: Option<PathBuf>,
+        timeout: Duration,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect_timeout(&addr, timeout)?;
         let mut conn = NetConnection::wrap(stream)?;
-        conn.send(&ClientMessage::Hello { player_name: name, protocol_version: PROTOCOL_VERSION, appearance });
-        Ok(Self { conn, my_net_id: None, next_seq: 0, connected: true })
+        conn.send(&ClientMessage::Hello {
+            player_name: name,
+            protocol_version: PROTOCOL_VERSION,
+            appearance,
+        });
+        Ok(Self {
+            conn,
+            my_net_id: None,
+            next_seq: 0,
+            connected: true,
+        })
     }
 
     pub fn send_input(&mut self, input: &InputState) {
@@ -327,7 +372,8 @@ impl NetClient {
     }
 
     pub fn send_dialogue_choice(&mut self, speaker: NetId, index: usize) {
-        self.conn.send(&ClientMessage::DialogueChoice { speaker, index });
+        self.conn
+            .send(&ClientMessage::DialogueChoice { speaker, index });
     }
 
     /// Sent when the local player changes their player-model appearance
@@ -472,7 +518,10 @@ mod tests {
             for &id_b in &player_ids[i + 1..] {
                 let (pa, _) = spawn_ring_offset(base, 0.0, NetId(id_a));
                 let (pb, _) = spawn_ring_offset(base, 0.0, NetId(id_b));
-                assert_ne!(pa, pb, "players {id_a} and {id_b} stacked on the same spawn offset");
+                assert_ne!(
+                    pa, pb,
+                    "players {id_a} and {id_b} stacked on the same spawn offset"
+                );
             }
         }
     }
@@ -505,9 +554,10 @@ mod tests {
     #[test]
     fn rejects_protocol_version_mismatch() {
         let mut host = NetHost::bind(0).expect("bind to an ephemeral port");
-        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", host.listener.local_addr().unwrap().port())
-            .parse()
-            .unwrap();
+        let addr: std::net::SocketAddr =
+            format!("127.0.0.1:{}", host.listener.local_addr().unwrap().port())
+                .parse()
+                .unwrap();
 
         let (joined, replies) = hello_and_wait_for_reply(
             &mut host,
@@ -519,24 +569,33 @@ mod tests {
             },
         );
 
-        assert!(joined.is_empty(), "a version-mismatched peer must never be treated as joined");
+        assert!(
+            joined.is_empty(),
+            "a version-mismatched peer must never be treated as joined"
+        );
         assert!(matches!(replies.as_slice(), [ServerMessage::Reject { .. }]));
-        assert_eq!(host.player_count(), 1, "only the host itself — the mismatched peer never counts");
+        assert_eq!(
+            host.player_count(),
+            1,
+            "only the host itself — the mismatched peer never counts"
+        );
     }
 
     #[test]
     fn rejects_connection_beyond_max_players() {
         let mut host = NetHost::bind(0).expect("bind to an ephemeral port");
-        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", host.listener.local_addr().unwrap().port())
-            .parse()
-            .unwrap();
+        let addr: std::net::SocketAddr =
+            format!("127.0.0.1:{}", host.listener.local_addr().unwrap().port())
+                .parse()
+                .unwrap();
 
         // Fill every remote slot — MAX_PLAYERS - 1, since the host itself
         // already occupies one.
         let mut clients = Vec::new();
         for i in 0..MAX_PLAYERS - 1 {
             let mut client =
-                NetClient::connect(addr, format!("Player{i}"), None, Duration::from_secs(2)).expect("connect");
+                NetClient::connect(addr, format!("Player{i}"), None, Duration::from_secs(2))
+                    .expect("connect");
             for _ in 0..100 {
                 let _ = host.poll_new_connections();
                 client.poll_messages();
@@ -559,7 +618,10 @@ mod tests {
             },
         );
 
-        assert!(joined.is_empty(), "a peer arriving after the lobby is full must never be treated as joined");
+        assert!(
+            joined.is_empty(),
+            "a peer arriving after the lobby is full must never be treated as joined"
+        );
         assert!(matches!(replies.as_slice(), [ServerMessage::Reject { .. }]));
         assert_eq!(host.player_count(), MAX_PLAYERS, "still full, not full+1");
     }

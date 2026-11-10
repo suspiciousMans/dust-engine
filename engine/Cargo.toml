@@ -2,6 +2,8 @@
 name = "engine"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+publish = false
 
 [dependencies]
 sdl2.workspace = true
@@ -19,7 +21,13 @@ log.workspace = true
 egui.workspace = true
 egui_glow.workspace = true
 egui_dock.workspace = true
-rodio.workspace = true
-notify.workspace = true
 gltf.workspace = true
 bincode.workspace = true
+
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+# Vendor SDL2 wherever a system copy can't be assumed (Windows, CI, Linux
+# without libsdl2-dev). Emscripten ships its own via -sUSE_SDL=2, so it is
+# excluded from this table.
+sdl2 = { workspace = true, features = ["bundled", "static-link"] }
+rodio.workspace = true
+notify.workspace = true
