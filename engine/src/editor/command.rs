@@ -17,7 +17,7 @@ use glam::Vec3;
 use hecs::{BuiltEntityClone, Entity, World};
 
 use super::hierarchy::{
-    self, children, delete_subtree, display_name, duplicate_subtree, parent_of, sibling_index,
+    self, delete_subtree, display_name, duplicate_subtree, parent_of, sibling_index,
     spawn_object, subtree, Children, Locked, Name, PrimitiveShape, SpawnOrder, Visible,
 };
 use super::inspector::{ComponentSnapshot, Registry, Value};

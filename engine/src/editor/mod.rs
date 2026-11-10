@@ -10,9 +10,11 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod selection;
 pub mod state;
+pub mod ui;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};
 pub use command::{Command, Ctx, UndoStack};
 pub use selection::Selection;
 pub use state::{EditorAction, EditorMode, EditorState, KeymapPreset, Tool};
+pub use ui::{draw_hierarchy, draw_inspector, handle_shortcuts};

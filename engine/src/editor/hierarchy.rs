@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn reparent_moves_and_updates_both_sides() {
-        let (mut w, a, b, c, d) = tree();
+        let (mut w, _a, b, c, d) = tree();
         reparent(&mut w, c, Some(d), None).unwrap();
         assert!(children(&w, b).is_empty());
         assert_eq!(children(&w, d), vec![c]);
