@@ -6,6 +6,7 @@ pub mod behavior;
 pub mod camera;
 pub mod class;
 pub mod ecs;
+pub mod editor;
 pub mod hotreload;
 pub mod hud;
 pub mod input;
