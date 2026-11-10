@@ -6,6 +6,7 @@ pub mod behavior;
 pub mod camera;
 pub mod class;
 pub mod ecs;
+#[cfg(not(target_os = "emscripten"))]
 pub mod hotreload;
 pub mod hud;
 pub mod input;
@@ -14,6 +15,7 @@ pub mod material;
 pub mod mesh;
 pub mod net;
 pub mod particles;
+pub mod perf;
 pub mod pathfinding;
 pub mod physics;
 pub mod platform;
