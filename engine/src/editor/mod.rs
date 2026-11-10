@@ -16,6 +16,7 @@ pub mod inspector;
 pub mod selection;
 pub mod state;
 pub mod ui;
+pub mod viewport_target;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};

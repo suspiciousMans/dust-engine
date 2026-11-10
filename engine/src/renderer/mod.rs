@@ -1,9 +1,11 @@
 mod framebuffer;
+mod grid;
 mod particles;
 mod post;
 mod skybox;
 
 pub use framebuffer::OffscreenFramebuffer;
+pub use grid::GridPass;
 pub use particles::ParticlePass;
 pub use post::{
     CompositePass, PostParams, ScreenOverlay, TrailPass, DEFAULT_FRAGMENT_SRC, VIGNETTE_RINGS,
