@@ -1,8 +1,10 @@
 mod gltf_loader;
 mod obj_loader;
+pub mod instancing;
 pub mod primitives;
 
 pub use gltf_loader::{load_gltf, GltfImage, GltfMeshEntry, GltfScene};
+pub use instancing::InstanceBuffer;
 pub use obj_loader::load_obj;
 
 use bytemuck::{Pod, Zeroable};
@@ -120,6 +122,14 @@ impl GpuMesh {
                 ebo,
                 index_count: mesh.indices.len() as i32,
             })
+        }
+    }
+
+    /// Draws with this mesh's VAO already bound (see `bind`): lets a caller
+    /// skip the rebind between repeats of the same mesh.
+    pub fn draw_bound(&self, gl: &glow::Context) {
+        unsafe {
+            gl.draw_elements(glow::TRIANGLES, self.index_count, glow::UNSIGNED_INT, 0);
         }
     }
 

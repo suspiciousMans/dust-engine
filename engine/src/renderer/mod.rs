@@ -5,7 +5,9 @@ mod skybox;
 
 pub use framebuffer::OffscreenFramebuffer;
 pub use particles::ParticlePass;
-pub use post::{CompositePass, PostParams, DEFAULT_FRAGMENT_SRC};
+pub use post::{
+    CompositePass, PostParams, ScreenOverlay, TrailPass, DEFAULT_FRAGMENT_SRC, VIGNETTE_RINGS,
+};
 pub use skybox::SkyboxPass;
 
 use glow::HasContext;
@@ -21,6 +23,14 @@ pub struct Renderer {
     skybox: SkyboxPass,
     particles: ParticlePass,
     resolution_scale: f32,
+    /// Vignette + grain applied by the composite pass (see `ScreenOverlay`).
+    overlay: Option<ScreenOverlay>,
+    /// Tracers: 0 = off. See `set_trails`.
+    trail_amount: f32,
+    trail: Option<TrailPass>,
+    /// Ping-pong targets for tracers (created on first use).
+    trail_targets: Vec<OffscreenFramebuffer>,
+    trail_index: usize,
 }
 
 fn scaled_size((w, h): (u32, u32), scale: f32) -> (u32, u32) {
@@ -44,13 +54,25 @@ impl Renderer {
             skybox: SkyboxPass::new(gl)?,
             particles: ParticlePass::new(gl)?,
             resolution_scale,
+            overlay: None,
+            trail_amount: 0.0,
+            trail: None,
+            trail_targets: Vec::new(),
+            trail_index: 0,
         })
     }
 
     /// Draws the sky gradient — call right after `begin_scene`, before any
     /// mesh, so scene geometry draws over it normally.
-    pub fn draw_skybox(&self, gl: &glow::Context, inv_view_proj: [f32; 16], horizon_color: [f32; 3], zenith_color: [f32; 3]) {
-        self.skybox.draw(gl, inv_view_proj, horizon_color, zenith_color);
+    pub fn draw_skybox(
+        &self,
+        gl: &glow::Context,
+        inv_view_proj: [f32; 16],
+        horizon_color: [f32; 3],
+        zenith_color: [f32; 3],
+    ) {
+        self.skybox
+            .draw(gl, inv_view_proj, horizon_color, zenith_color);
     }
 
     /// Draws every `(mesh, model, color)` particle, blended — call after
@@ -82,12 +104,30 @@ impl Renderer {
         // `Drop`, so without this explicit `destroy` those objects would
         // leak in the driver on every shader-profile switch (unlike
         // `resize_if_needed`, which already destroys the old framebuffer).
-        let composite = CompositePass::new(gl, post_fragment_src)?;
+        let mut composite = CompositePass::new(gl, post_fragment_src)?;
+        composite.grain_tex = self.composite.grain_tex.take();
         unsafe {
             self.composite.destroy(gl);
         }
         self.composite = composite;
         Ok(())
+    }
+
+    /// Tracers: 0 = off, up to ~0.9 = long smeared trails behind anything
+    /// that moves. Takes effect on the next `present`.
+    pub fn set_trails(&mut self, amount: f32) {
+        self.trail_amount = amount.clamp(0.0, 0.95);
+    }
+
+    /// The vignette + grain for the next `present` (`None` = none). Needs a
+    /// composite shader with the `uOv*` uniforms; others ignore it.
+    pub fn set_overlay(&mut self, overlay: Option<ScreenOverlay>) {
+        self.overlay = overlay;
+    }
+
+    /// Uploads the film-grain tile (premultiplied RGBA8, `size` x `size`).
+    pub fn set_grain_texture(&mut self, gl: &glow::Context, size: u32, rgba: &[u8]) {
+        self.composite.set_grain_texture(gl, size, rgba);
     }
 
     pub fn set_resolution_scale(&mut self, scale: f32) {
@@ -135,11 +175,12 @@ impl Renderer {
     /// Unbinds the offscreen target and blits it to the default framebuffer
     /// at the window's full drawable size.
     pub fn present(
-        &self,
+        &mut self,
         gl: &glow::Context,
         window_drawable_size: (u32, u32),
         post_params: &PostParams,
     ) {
+        let source = self.apply_trails(gl);
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.viewport(
@@ -149,7 +190,74 @@ impl Renderer {
                 window_drawable_size.1 as i32,
             );
         }
-        self.composite
-            .draw(gl, self.offscreen.color_texture, post_params);
+        self.composite.draw(
+            gl,
+            source,
+            post_params,
+            self.overlay.as_ref(),
+            window_drawable_size.1 as f32,
+        );
+    }
+
+    /// Blends the frame into the tracer ping-pong targets and returns the
+    /// texture the composite pass should sample.
+    fn apply_trails(&mut self, gl: &glow::Context) -> glow::Texture {
+        let (w, h) = (self.offscreen.width, self.offscreen.height);
+        if self.trail_amount <= 0.0 {
+            // Drop the history so trails start clean next time.
+            for t in self.trail_targets.drain(..) {
+                unsafe { t.destroy(gl) };
+            }
+            return self.offscreen.color_texture;
+        }
+        let stale = self
+            .trail_targets
+            .first()
+            .is_some_and(|t| (t.width, t.height) != (w, h));
+        if stale || self.trail_targets.is_empty() {
+            for t in self.trail_targets.drain(..) {
+                unsafe { t.destroy(gl) };
+            }
+            for _ in 0..2 {
+                match OffscreenFramebuffer::new(gl, w, h) {
+                    Ok(t) => {
+                        t.bind(gl);
+                        unsafe {
+                            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+                            gl.clear(glow::COLOR_BUFFER_BIT);
+                        }
+                        self.trail_targets.push(t);
+                    }
+                    Err(e) => {
+                        log::warn!("tracers disabled: {e}");
+                        self.trail_amount = 0.0;
+                        return self.offscreen.color_texture;
+                    }
+                }
+            }
+        }
+        if self.trail.is_none() {
+            match TrailPass::new(gl) {
+                Ok(p) => self.trail = Some(p),
+                Err(e) => {
+                    log::warn!("tracers disabled: {e}");
+                    self.trail_amount = 0.0;
+                    return self.offscreen.color_texture;
+                }
+            }
+        }
+        let prev = self.trail_index;
+        let next = 1 - prev;
+        self.trail_targets[next].bind(gl);
+        if let Some(pass) = &self.trail {
+            pass.draw(
+                gl,
+                self.offscreen.color_texture,
+                self.trail_targets[prev].color_texture,
+                self.trail_amount,
+            );
+        }
+        self.trail_index = next;
+        self.trail_targets[next].color_texture
     }
 }
