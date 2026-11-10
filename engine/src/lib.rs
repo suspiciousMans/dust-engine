@@ -29,6 +29,7 @@ pub mod texture;
 pub mod time;
 pub mod tilemap;
 pub mod ui;
+pub mod ui_designer;
 
 pub use glam;
 pub use glow;
