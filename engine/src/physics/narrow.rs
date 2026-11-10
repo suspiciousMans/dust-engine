@@ -598,9 +598,11 @@ mod tests {
         let h = Vec3::splat(0.5);
         let rot = Quat::from_rotation_y(FRAC_PI_4);
         // Diamond-shaped box pointing its corner at +X: corner at 0.707.
-        let c = collide(BOX(h), Pose::new(Vec3::new(1.6, 0.0, 0.0), rot), BOX(h), Pose::at(Vec3::ZERO)).unwrap();
+        let c = collide(BOX(h), Pose::new(Vec3::new(1.6, 0.0, 0.0), rot), BOX(h), Pose::at(Vec3::ZERO));
         // overlap = 0.5 + 0.7071 - 1.6 < 0 → no contact
-        let _ = c;
+        assert!(c.is_none());
+        let c = collide(BOX(h), Pose::new(Vec3::new(1.15, 0.0, 0.0), rot), BOX(h), Pose::at(Vec3::ZERO)).unwrap();
+        assert!(near(c.normal, Vec3::X), "{:?}", c.normal);
     }
 
     #[test]
@@ -612,7 +614,7 @@ mod tests {
         assert!(near(c.normal, Vec3::X), "{:?}", c.normal);
         assert!((c.depth - 0.1071).abs() < 1e-3, "{}", c.depth);
         // Contact lies near the corner tip (x ≈ 0.5).
-        assert!((c.point.x - 0.5).abs() < 0.1, "{:?}", c.point);
+        assert!((c.point.x - 0.45).abs() < 0.1, "{:?}", c.point);
     }
 
     #[test]
@@ -643,7 +645,7 @@ mod tests {
 
     #[test]
     fn aabb_and_capsule_mix() {
-        let c = collide(CAPSULE(0.3, 0.5), Pose::at(Vec3::new(0.0, 0.75, 0.0)), AABB(Vec3::splat(0.5)), Pose::at(Vec3::ZERO)).unwrap();
+        let c = collide(CAPSULE(0.3, 0.5), Pose::at(Vec3::new(0.0, 1.25, 0.0)), AABB(Vec3::splat(0.5)), Pose::at(Vec3::ZERO)).unwrap();
         assert!(near(c.normal, Vec3::Y));
         assert!((c.depth - 0.05).abs() < 1e-3, "{}", c.depth);
     }

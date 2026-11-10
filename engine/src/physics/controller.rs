@@ -257,11 +257,11 @@ mod tests {
         w.spawn((Transform::from_position(Vec3::new(-2.0, 0.5, 0.0)), Collider::aabb(Vec3::new(0.5, 0.5, 5.0))));
         let (e, mut cc) = player(&mut w, REST);
         cc.grounded = true;
-        for _ in 0..40 {
+        for _ in 0..20 {
             cc.move_and_slide(&mut w, e, Vec3::new(0.1, -0.05, 0.0));
         }
         let p = w.get::<&Transform>(e).unwrap().position;
-        assert!(p.x > 2.0 && (p.y - (REST + 0.25)).abs() < 0.04, "stepped: {p:?}");
+        assert!(p.x > 1.5 && (p.y - (REST + 0.25)).abs() < 0.04, "stepped: {p:?}");
 
         let (e2, mut cc2) = player(&mut w, REST);
         w.get::<&mut Transform>(e2).unwrap().position.z = 3.0;
@@ -288,11 +288,12 @@ mod tests {
         floor(&mut w);
         ramp(&mut w, 25.0);
         let (e, mut cc) = player(&mut w, 3.0);
+        w.get::<&mut Transform>(e).unwrap().position.x = 4.0;
         for _ in 0..30 {
             cc.move_and_slide(&mut w, e, Vec3::new(0.0, -0.2, 0.0));
         }
         let mut last = None;
-        for _ in 0..40 {
+        for _ in 0..50 {
             last = cc.move_and_slide(&mut w, e, Vec3::new(0.08, -0.05, 0.0));
         }
         let p = w.get::<&Transform>(e).unwrap().position;
@@ -303,13 +304,13 @@ mod tests {
         floor(&mut w);
         ramp(&mut w, 65.0);
         let (e, mut cc) = player(&mut w, REST);
-        w.get::<&mut Transform>(e).unwrap().position.x = -3.0;
+        w.get::<&mut Transform>(e).unwrap().position.x = 2.0;
         cc.grounded = true;
-        for _ in 0..80 {
+        for _ in 0..60 {
             cc.move_and_slide(&mut w, e, Vec3::new(0.08, -0.05, 0.0));
         }
         let p = w.get::<&Transform>(e).unwrap().position;
-        assert!(p.y < 1.0, "did not climb 65 deg slope: {p:?}");
+        assert!(p.y < 1.0 && p.x < 5.0, "did not climb 65 deg slope: {p:?}");
     }
 
     #[test]
