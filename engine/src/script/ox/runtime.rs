@@ -36,6 +36,7 @@ impl OxVal {
     fn float(f: f64) -> Self {
         Self { tag: 2, f, ..Self::NIL }
     }
+    #[allow(dead_code)]
     fn boolean(b: bool) -> Self {
         Self { tag: 3, i: b as i64, ..Self::NIL }
     }

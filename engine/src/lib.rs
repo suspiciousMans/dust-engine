@@ -24,6 +24,7 @@ pub mod save;
 pub mod screen_effect;
 pub mod script;
 pub mod shader;
+#[cfg(feature = "legacy-pss")]
 pub mod testkit;
 pub mod texture;
 pub mod time;

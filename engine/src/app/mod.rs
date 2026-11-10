@@ -8,7 +8,9 @@ use sdl2::event::Event;
 
 use crate::input::Input;
 use crate::platform::Platform;
+#[cfg(feature = "legacy-pss")]
 use crate::script::Interpreter;
+#[cfg(feature = "legacy-pss")]
 use crate::testkit::SmokeTestHost;
 use crate::time::Time;
 
@@ -100,6 +102,7 @@ impl App {
     /// function returns `Ok(0)` (pass) or `Ok(1)` (fail) — once the script
     /// calls `finish(...)`, an assertion fails, or the window is closed
     /// without either (treated as a failure: the test never finished).
+    #[cfg(feature = "legacy-pss")]
     pub fn run_scripted<G: Game>(
         title: &str,
         width: u32,

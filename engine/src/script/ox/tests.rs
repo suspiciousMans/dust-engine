@@ -214,3 +214,25 @@ fn file_watcher_triggers_rebuild_and_swap() {
     b.on_interact(&mut api);
     assert_eq!(api.logs.last().unwrap(), "two", "last good build keeps running");
 }
+
+/// `cargo test -p engine --lib bench_spin_bob -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn bench_spin_bob() {
+    let Some(tc) = toolchain() else { return };
+    let out = scratch("bench");
+    let rt = OxRuntime::with_toolchain(tc, example_dir(), &out);
+    rt.reload(&example_dir().join("spin_bob.ox")).unwrap();
+    let mut b = rt.behavior("spin_bob");
+    let mut api = HeadlessApi::default();
+    b.on_ready(&mut api);
+    let n = 20_000;
+    let t = Instant::now();
+    for _ in 0..n {
+        b.on_update(&mut api, 0.016);
+        api.hud_bars.clear();
+        rt.services().drain_commands();
+    }
+    let per = t.elapsed().as_nanos() as f64 / n as f64;
+    eprintln!("spin_bob on_update: {per:.0} ns/call ({n} calls, debug engine build, script opt-level=1)");
+}

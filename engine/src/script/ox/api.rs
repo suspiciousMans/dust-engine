@@ -65,14 +65,14 @@ pub enum OxCommand {
 /// Shared between the app and every `OxBehavior`.
 #[derive(Default)]
 pub struct OxServices {
-    input: Mutex<InputSnapshot>,
+    input: Mutex<std::sync::Arc<InputSnapshot>>,
     commands: Mutex<Vec<OxCommand>>,
     next_id: AtomicI64,
 }
 
 impl OxServices {
     pub fn set_input(&self, snapshot: InputSnapshot) {
-        *self.input.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
+        *self.input.lock().unwrap_or_else(|e| e.into_inner()) = std::sync::Arc::new(snapshot);
     }
     pub fn drain_commands(&self) -> Vec<OxCommand> {
         std::mem::take(&mut *self.commands.lock().unwrap_or_else(|e| e.into_inner()))
@@ -83,7 +83,7 @@ impl OxServices {
     pub(crate) fn new_id(&self) -> i64 {
         self.next_id.fetch_add(1, Ordering::Relaxed) + 1
     }
-    pub(crate) fn input(&self) -> InputSnapshot {
+    pub(crate) fn input(&self) -> std::sync::Arc<InputSnapshot> {
         self.input.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
