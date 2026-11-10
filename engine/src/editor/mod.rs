@@ -5,6 +5,7 @@
 //! functions in [`ui`] is unit-testable headless (and even `ui` is tested
 //! against a bare `egui::Context`).
 
+pub mod camera;
 pub mod command;
 pub mod hierarchy;
 pub mod inspector;
