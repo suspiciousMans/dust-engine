@@ -86,6 +86,10 @@ impl UiBindings {
     pub fn remove(&mut self, name: &str) {
         self.values.remove(name);
     }
+    /// Remove every value whose name starts with `prefix` (e.g. `"hud."`).
+    pub fn remove_prefix(&mut self, prefix: &str) {
+        self.values.retain(|k, _| !k.starts_with(prefix));
+    }
     pub fn names(&self) -> impl Iterator<Item = &String> {
         self.values.keys()
     }

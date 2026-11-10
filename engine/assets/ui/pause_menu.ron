@@ -1,0 +1,103 @@
+// Pause menu — reproduces engine/src/ui/pause_menu.rs (draw_pause_menu).
+// Events: resume_game, exit_to_editor, restart_level, quit_game.
+// Bindings: editor_available (bool) picks "Exit to Editor" vs "Restart Level".
+(
+    name: "pause_menu",
+    scale_mode: ScaleWithScreen(reference: (1280.0, 720.0), match_height: 0.5),
+    respect_safe_area: true,
+    styles: (
+        classes: {
+            "overlay": (base: (bg_color: Some((0.0, 0.0, 0.0, 0.55)))),
+            "window": (
+                parent: Some("panel"),
+                base: (bg_color: Some((0.11, 0.12, 0.15, 0.97)), corner_radius: Some(6.0)),
+            ),
+            "panel": (
+                base: (
+                    bg_color: Some((0.09, 0.10, 0.13, 0.92)),
+                    border_width: Some(1.0),
+                    border_color: Some((0.35, 0.37, 0.45, 1.0)),
+                    corner_radius: Some(6.0),
+                ),
+            ),
+            "title": (base: (font_size: Some(18.0), text_align: Some(Center))),
+            "Button": (base: (text_align: Some(Center))),
+            "button": (
+                base: (
+                    bg_color: Some((0.20, 0.22, 0.29, 1.0)),
+                    border_width: Some(1.0),
+                    border_color: Some((0.40, 0.43, 0.55, 1.0)),
+                    corner_radius: Some(4.0),
+                    font_size: Some(16.0),
+                ),
+                hover: (bg_color: Some((0.28, 0.32, 0.43, 1.0))),
+                pressed: (bg_color: Some((0.14, 0.16, 0.22, 1.0))),
+                disabled: (bg_color: Some((0.15, 0.15, 0.17, 1.0)), text_color: Some((0.5, 0.5, 0.5, 1.0))),
+                focused: (border_color: Some((1.0, 0.85, 0.3, 1.0)), border_width: Some(2.0)),
+            ),
+        },
+    ),
+    root: (
+        name: "Root",
+        kind: Panel,
+        children: [
+            (name: "Dim", kind: Panel, classes: ["overlay"]),
+            (
+                name: "Window",
+                kind: Panel,
+                classes: ["window"],
+                anchor_min: (0.5, 0.5),
+                anchor_max: (0.5, 0.5),
+                pivot: (0.5, 0.5),
+                width: Fixed(220.0),
+                height: Fit,
+                padding: (left: 12.0, top: 12.0, right: 12.0, bottom: 12.0),
+                children: [
+                    (
+                        name: "Content",
+                        kind: VStack(spacing: 8.0, cross_align: Stretch),
+                        height: Fit,
+                        children: [
+                            (
+                                name: "Title",
+                                kind: Label(text: "Paused"),
+                                classes: ["title"],
+                                height: Fit,
+                            ),
+                            (
+                                name: "ResumeButton",
+                                kind: Button(text: "Resume", on_click: Some("resume_game")),
+                                classes: ["button"],
+                                height: Fit,
+                                padding: (left: 8.0, top: 6.0, right: 8.0, bottom: 6.0),
+                            ),
+                            (
+                                name: "ExitToEditorButton",
+                                kind: Button(text: "Exit to Editor", on_click: Some("exit_to_editor")),
+                                classes: ["button"],
+                                height: Fit,
+                                padding: (left: 8.0, top: 6.0, right: 8.0, bottom: 6.0),
+                                bindings: {"visible": "editor_available"},
+                            ),
+                            (
+                                name: "RestartLevelButton",
+                                kind: Button(text: "Restart Level", on_click: Some("restart_level")),
+                                classes: ["button"],
+                                height: Fit,
+                                padding: (left: 8.0, top: 6.0, right: 8.0, bottom: 6.0),
+                                bindings: {"visible": "!editor_available"},
+                            ),
+                            (
+                                name: "QuitButton",
+                                kind: Button(text: "Quit Game", on_click: Some("quit_game")),
+                                classes: ["button"],
+                                height: Fit,
+                                padding: (left: 8.0, top: 6.0, right: 8.0, bottom: 6.0),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    ),
+)

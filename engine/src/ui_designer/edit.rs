@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use super::bindings::UiBindings;
+use super::focus::UiFocus;
 use super::files::{save_doc, UiDocWatcher};
 use super::layout::{apply_anchor_preset, AnchorAxis, LayoutResult, Rect};
 use super::model::*;
@@ -117,6 +118,16 @@ pub struct DesignerState {
     pub dirty: bool,
     /// Style class being edited in the style editor.
     pub style_class: Option<String>,
+    /// Text buffers for the "add" boxes in the panel.
+    pub new_class_name: String,
+    pub new_binding_name: String,
+    /// Focus cursor used by the interactive preview (arrow keys / Tab / Enter).
+    pub preview_focus: UiFocus,
+    /// Panel bookkeeping: last hot-reload poll time (seconds) and canvas drag start.
+    pub last_poll: f64,
+    pub canvas_drag_start: Option<[f32; 2]>,
+    /// Where the canvas drew the viewport last frame: (screen origin, pixels per point).
+    pub canvas_view: Option<([f32; 2], f32)>,
 
     undo: Vec<UiDoc>,
     redo: Vec<UiDoc>,
@@ -149,6 +160,12 @@ impl DesignerState {
             path_text: "ui/untitled.ron".into(),
             dirty: false,
             style_class: None,
+            new_class_name: String::new(),
+            new_binding_name: String::new(),
+            preview_focus: UiFocus::new(),
+            last_poll: 0.0,
+            canvas_drag_start: None,
+            canvas_view: None,
             undo: Vec::new(),
             redo: Vec::new(),
             edit_group_open: false,
