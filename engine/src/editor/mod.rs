@@ -5,7 +5,15 @@
 //! functions in [`ui`] is unit-testable headless (and even `ui` is tested
 //! against a bare `egui::Context`).
 
+pub mod bounds;
+pub mod cam_matrices;
 pub mod command;
+pub mod gizmo;
+pub mod interaction;
+pub mod modal;
+pub mod picking;
+pub mod snapping;
+pub mod world_xform;
 pub mod hierarchy;
 pub mod inspector;
 pub mod selection;
