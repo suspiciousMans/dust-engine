@@ -253,4 +253,31 @@ mod tests {
         let r = rect(&doc, &with_safe, "TopLeft");
         assert!((r.x - 42.0).abs() < 1e-3 && (r.y - 32.0).abs() < 1e-3, "{r:?}");
     }
+
+    #[test]
+    fn clicking_resume_in_pause_menu_yields_resume_action_end_to_end() {
+        use crate::ui_designer::render::draw_ui_tree;
+        let doc = pause_menu_doc();
+        let mut b = UiBindings::new();
+        publish_pause_menu(&mut b, true);
+        let screen = egui::Vec2::new(1280.0, 720.0);
+        let ctx = egui::Context::default();
+        let run = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)), events, ..Default::default() };
+            let mut result = None;
+            let _ = ctx.run(raw, |c| result = Some(draw_ui_tree(c, &doc, &b, screen)));
+            result.unwrap()
+        };
+        let first = run(vec![]);
+        let center = first.layout.rect(find(&doc, "ResumeButton")).unwrap().center();
+        let pos = egui::Pos2::new(center[0], center[1]);
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let mut actions = Vec::new();
+        for events in [vec![egui::Event::PointerMoved(pos)], vec![egui::Event::PointerMoved(pos)], vec![button(true)], vec![button(false)], vec![]] {
+            for e in run(events).events {
+                actions.push(pause_action_from_event(&e));
+            }
+        }
+        assert!(matches!(actions.as_slice(), [Some(PauseMenuAction::Resume)]), "{}", actions.len());
+    }
 }
