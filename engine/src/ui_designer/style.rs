@@ -123,6 +123,44 @@ pub struct StyleSheet {
 }
 
 impl StyleSheet {
+    /// A reasonable dark look: classes `panel` and `button`, plus a `Button`
+    /// kind class that centres button text. New documents start with this.
+    pub fn default_theme() -> StyleSheet {
+        let mut s = StyleSheet::default();
+        s.classes.insert(
+            "panel".into(),
+            StyleClass {
+                base: StyleProps {
+                    bg_color: Some([0.09, 0.10, 0.13, 0.92]),
+                    border_width: Some(1.0),
+                    border_color: Some([0.35, 0.37, 0.45, 1.0]),
+                    corner_radius: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        s.classes.insert("Button".into(), StyleClass { base: StyleProps { text_align: Some(TextAlign::Center), ..Default::default() }, ..Default::default() });
+        s.classes.insert(
+            "button".into(),
+            StyleClass {
+                base: StyleProps {
+                    bg_color: Some([0.20, 0.22, 0.29, 1.0]),
+                    border_width: Some(1.0),
+                    border_color: Some([0.40, 0.43, 0.55, 1.0]),
+                    corner_radius: Some(4.0),
+                    ..Default::default()
+                },
+                hover: StyleProps { bg_color: Some([0.28, 0.32, 0.43, 1.0]), ..Default::default() },
+                pressed: StyleProps { bg_color: Some([0.14, 0.16, 0.22, 1.0]), ..Default::default() },
+                disabled: StyleProps { bg_color: Some([0.15, 0.15, 0.17, 1.0]), text_color: Some([0.5, 0.5, 0.5, 1.0]), ..Default::default() },
+                focused: StyleProps { border_color: Some([1.0, 0.85, 0.3, 1.0]), border_width: Some(2.0), ..Default::default() },
+                ..Default::default()
+            },
+        );
+        s
+    }
+
     /// Chain of classes from the root ancestor down to `name` itself.
     /// Missing parents and cycles end the chain early.
     fn chain(&self, name: &str) -> Vec<&StyleClass> {
@@ -250,6 +288,15 @@ mod tests {
             },
         );
         s
+    }
+
+    #[test]
+    fn default_theme_is_valid_and_centres_buttons() {
+        let t = StyleSheet::default_theme();
+        assert!(t.validate().is_empty());
+        let r = t.resolve("Button", &["button".into()], WidgetState { focused: true, ..Default::default() });
+        assert_eq!(r.text_align, TextAlign::Center);
+        assert_eq!(r.border_width, 2.0);
     }
 
     #[test]

@@ -475,7 +475,7 @@ impl Default for UiDoc {
             name: "Untitled".into(),
             scale_mode: ScaleMode::Constant,
             respect_safe_area: false,
-            styles: StyleSheet::default(),
+            styles: StyleSheet::default_theme(),
             root,
             next_id: 1,
         };
