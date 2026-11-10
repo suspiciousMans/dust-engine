@@ -5,8 +5,12 @@
 //! functions in [`ui`] is unit-testable headless (and even `ui` is tested
 //! against a bare `egui::Context`).
 
+pub mod command;
 pub mod hierarchy;
 pub mod inspector;
+pub mod selection;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};
+pub use command::{Command, Ctx, UndoStack};
+pub use selection::Selection;
