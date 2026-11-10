@@ -87,6 +87,22 @@ impl SceneSnapshot for RegistrySnapshot {
     }
 }
 
+/// Snapshot that does nothing, for hosts that already restore the scene
+/// themselves when play stops.
+#[derive(Default)]
+pub struct NullSnapshot;
+
+impl SceneSnapshot for NullSnapshot {
+    fn capture(&mut self, _: &World, _: &Registry) {}
+    fn restore(&mut self, _: &mut World, _: &Registry) -> bool {
+        false
+    }
+    fn has_snapshot(&self) -> bool {
+        false
+    }
+    fn discard(&mut self) {}
+}
+
 // ------------------------------------------------------------------- scene io
 
 /// File-menu backend.
@@ -96,6 +112,25 @@ pub trait SceneIo {
     fn save(&mut self, world: &World, path: &Path) -> Result<(), String>;
     /// File the scene was last opened from / saved to.
     fn current_path(&self) -> Option<&Path>;
+}
+
+/// Refuses every operation with `reason` — for hosts that manage scenes
+/// elsewhere (the File menu must not wipe a world it can't round-trip).
+pub struct DisabledSceneIo(pub String);
+
+impl SceneIo for DisabledSceneIo {
+    fn new_scene(&mut self, _: &mut World) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+    fn open(&mut self, _: &Path, _: &mut World) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+    fn save(&mut self, _: &World, _: &Path) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+    fn current_path(&self) -> Option<&Path> {
+        None
+    }
 }
 
 /// Stub over `level.rs`: round-trips named primitives (name, shape, transform)

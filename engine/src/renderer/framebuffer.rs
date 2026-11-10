@@ -104,6 +104,10 @@ impl OffscreenFramebuffer {
         }
     }
 
+    pub(crate) fn raw(&self) -> glow::Framebuffer {
+        self.fbo
+    }
+
     pub fn bind(&self, gl: &glow::Context) {
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));

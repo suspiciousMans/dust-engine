@@ -24,6 +24,7 @@ pub struct Renderer {
     composite: CompositePass,
     skybox: SkyboxPass,
     particles: ParticlePass,
+    grid: Option<GridPass>,
     resolution_scale: f32,
     /// Vignette + grain applied by the composite pass (see `ScreenOverlay`).
     overlay: Option<ScreenOverlay>,
@@ -55,6 +56,7 @@ impl Renderer {
             composite: CompositePass::new(gl, post_fragment_src)?,
             skybox: SkyboxPass::new(gl)?,
             particles: ParticlePass::new(gl)?,
+            grid: None,
             resolution_scale,
             overlay: None,
             trail_amount: 0.0,
@@ -91,6 +93,23 @@ impl Renderer {
             self.particles.draw_particle(gl, &mesh, &model, color);
         }
         self.particles.end(gl);
+    }
+
+    /// Editor ground grid (y = 0) into the bound scene target. Compiled on
+    /// first use; a shader failure is logged once and the grid stays off.
+    pub fn draw_grid(&mut self, gl: &glow::Context, view_proj: glam::Mat4, fade_distance: f32) {
+        if self.grid.is_none() {
+            match GridPass::new(gl) {
+                Ok(g) => self.grid = Some(g),
+                Err(e) => {
+                    log::error!("editor grid disabled: {e}");
+                    return;
+                }
+            }
+        }
+        if let Some(g) = &self.grid {
+            g.draw(gl, view_proj.to_cols_array(), view_proj.inverse().to_cols_array(), fade_distance);
+        }
     }
 
     /// Recompiles the composite pass with a different post fragment shader
@@ -182,9 +201,22 @@ impl Renderer {
         window_drawable_size: (u32, u32),
         post_params: &PostParams,
     ) {
+        self.present_to(gl, None, window_drawable_size, post_params);
+    }
+
+    /// Like [`present`](Self::present) but composites into `target` (the
+    /// editor viewport framebuffer) instead of the window when given.
+    /// `size` is the target's pixel size.
+    pub fn present_to(
+        &mut self,
+        gl: &glow::Context,
+        target: Option<&OffscreenFramebuffer>,
+        window_drawable_size: (u32, u32),
+        post_params: &PostParams,
+    ) {
         let source = self.apply_trails(gl);
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, target.map(|t| t.raw()));
             gl.viewport(
                 0,
                 0,

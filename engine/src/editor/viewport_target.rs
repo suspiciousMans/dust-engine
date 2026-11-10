@@ -48,6 +48,10 @@ impl ViewportTarget {
         Ok(())
     }
 
+    pub fn framebuffer(&self) -> Option<&OffscreenFramebuffer> {
+        self.fb.as_ref()
+    }
+
     /// Binds the framebuffer (and sets the GL viewport) for scene drawing.
     pub fn bind(&self, gl: &glow::Context) -> bool {
         match &self.fb {

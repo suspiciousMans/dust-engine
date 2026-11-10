@@ -34,8 +34,9 @@ pub trait ShellHost {
         None
     }
     /// Draws a tab the shell has no built-in content for (Assets, UI Designer
-    /// and `Host(name)` tabs). Return `false` to show a placeholder.
-    fn tab_ui(&mut self, _tab: &EditorTab, _ui: &mut egui::Ui) -> bool {
+    /// and `Host(name)` tabs). `world` is the shell's world, handed through so
+    /// hosts that keep their own copy can swap it in. Return `false` to show a placeholder.
+    fn tab_ui(&mut self, _tab: &EditorTab, _world: &mut World, _ui: &mut egui::Ui) -> bool {
         false
     }
     /// World-space AABB of `selection` for frame-selected. Hosts with real
@@ -510,7 +511,7 @@ impl TabViewer for ShellViewer<'_> {
             }
             EditorTab::Settings => settings_ui(ui, self.prefs, &mut self.preset_request),
             other => {
-                if !self.host.tab_ui(other, ui) {
+                if !self.host.tab_ui(other, self.world, ui) {
                     ui.weak(format!("{} is not connected in this build", other.title()));
                 }
             }
