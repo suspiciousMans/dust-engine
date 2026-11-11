@@ -27,7 +27,15 @@ pub struct AssetBrowserState {
     /// (with a warn log) on every frame the browser is open. Cleared on
     /// `open` so a re-scan retries them.
     failed: HashSet<PathBuf>,
+    /// Lazily requested thumbnails (embedded users such as the editor's
+    /// Assets tab): filled during drawing by `thumbnail_or_request`, loaded
+    /// a few per frame by `ensure_thumbnails_loaded`.
+    wanted: Vec<PathBuf>,
 }
+
+/// Thumbnails decoded per frame for lazily requested files, so opening a
+/// folder of large images doesn't stall a frame.
+const LAZY_THUMBNAILS_PER_FRAME: usize = 6;
 
 impl AssetBrowserState {
     pub fn is_open(&self) -> bool {
@@ -47,16 +55,24 @@ impl AssetBrowserState {
     /// any scanned file that doesn't have one cached yet. Must be called
     /// *before* `EguiState::run` — see the struct doc comment.
     pub fn ensure_thumbnails_loaded(&mut self, gl: &glow::Context, ui_state: &mut EguiState) {
-        if !self.open {
-            return;
-        }
-        let missing: Vec<PathBuf> = self
-            .files
-            .iter()
-            .filter(|path| !self.thumbnails.contains_key(*path) && !self.failed.contains(*path))
-            .cloned()
-            .collect();
+        let mut missing: Vec<PathBuf> = if self.open {
+            self.files
+                .iter()
+                .filter(|path| !self.thumbnails.contains_key(*path) && !self.failed.contains(*path))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Lazy requests: only what the last frame actually drew, a few at a
+        // time. Anything not loaded this frame is requested again next frame
+        // if it is still on screen.
+        let lazy = std::mem::take(&mut self.wanted);
+        missing.extend(lazy.into_iter().take(LAZY_THUMBNAILS_PER_FRAME));
         for path in missing {
+            if self.thumbnails.contains_key(&path) || self.failed.contains(&path) {
+                continue;
+            }
             match GpuTexture::load_from_file(gl, &path, TextureFilter::Nearest) {
                 Ok(texture) => {
                     let id = ui_state.register_texture(texture.handle);
@@ -69,6 +85,37 @@ impl AssetBrowserState {
                 }
             }
         }
+    }
+
+    /// The registered thumbnail for `path`, if it has been loaded.
+    pub fn thumbnail(&self, path: &Path) -> Option<egui::TextureId> {
+        self.thumbnails.get(path).copied()
+    }
+
+    /// Like [`Self::thumbnail`], but queues `path` for loading when it is
+    /// neither loaded nor known-bad. Call from drawing code for the tiles
+    /// that are on screen; the load happens in the next
+    /// `ensure_thumbnails_loaded`.
+    pub fn thumbnail_or_request(&mut self, path: &Path) -> Option<egui::TextureId> {
+        if let Some(id) = self.thumbnails.get(path) {
+            return Some(*id);
+        }
+        if !self.failed.contains(path) && !self.wanted.iter().any(|p| p == path) {
+            self.wanted.push(path.to_path_buf());
+        }
+        None
+    }
+
+    /// Forgets which files failed to decode so a refresh retries them.
+    pub fn forget_failures(&mut self) {
+        self.failed.clear();
+    }
+
+    /// True if `path` has an image extension this browser can thumbnail.
+    pub fn is_thumbnailable(path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| TEXTURE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
     }
 
     /// Draws the browser window if open. Returns the picked file's path
