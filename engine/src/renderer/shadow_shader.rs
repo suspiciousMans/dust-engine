@@ -202,4 +202,99 @@ void main() { FragColor = vec4(1.0); }
         let _ = patch_mesh_shaders(&a, FRAG, "FragColor").unwrap();
         assert_eq!(a, VERT);
     }
+
+    // ---- default path is untouched -------------------------------------
+
+    fn fnv1a(s: &str) -> u64 {
+        s.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+
+    /// Every game's real mesh shader pair, as shipped (read at compile time).
+    const GAME_SHADERS: [(&str, &str, &str, u64, u64); 4] = [
+        (
+            "physics-sandbox",
+            include_str!("../../../games/physics-sandbox/assets/shaders/mesh.vert"),
+            include_str!("../../../games/physics-sandbox/assets/shaders/mesh.frag"),
+            0x4efde7aea43ebc46,
+            0x85e80abc1d5a3a92,
+        ),
+        (
+            "walkaround_demo",
+            include_str!("../../../games/walkaround_demo/assets/shaders/mesh.vert"),
+            include_str!("../../../games/walkaround_demo/assets/shaders/mesh.frag"),
+            0x10e82c4202e2216,
+            0x56229633d0213087,
+        ),
+        (
+            "mushroom_man",
+            include_str!("../../../games/mushroom_man/assets/shaders/mesh.vert"),
+            include_str!("../../../games/mushroom_man/assets/shaders/mesh.frag"),
+            0x10e82c4202e2216,
+            0x56229633d0213087,
+        ),
+        (
+            "sandbox",
+            include_str!("../../../games/sandbox/assets/shaders/mesh.vert"),
+            include_str!("../../../games/sandbox/assets/shaders/mesh.frag"),
+            0x10e82c4202e2216,
+            0x56229633d0213087,
+        ),
+    ];
+
+    /// Games that do not opt in link their shader files verbatim. This pins
+    /// the shipped mesh shader sources (FNV-1a) so any in-place edit to add
+    /// shadows fails here; shadow code may only arrive via `patch_mesh_shaders`.
+    /// If you change a game shader on purpose, update the hashes.
+    #[test]
+    fn default_path_shader_sources_are_unchanged() {
+        for (game, vert, frag, hv, hf) in GAME_SHADERS {
+            assert_eq!(fnv1a(vert), hv, "{game} mesh.vert changed");
+            assert_eq!(fnv1a(frag), hf, "{game} mesh.frag changed");
+            for src in [vert, frag] {
+                assert!(!src.contains("jame_user_main") && !src.contains("uShadow") && !src.contains("vJameShadow"), "{game}");
+            }
+        }
+    }
+
+    #[test]
+    fn patching_real_game_shaders_is_opt_in_and_pure() {
+        let (_, vert, frag, _, _) = GAME_SHADERS[0];
+        let (v, f) = patch_mesh_shaders(vert, frag, "FragColor").unwrap();
+        assert_ne!(v, vert);
+        assert_ne!(f, frag);
+        // Un-renaming the wrapper gives back the original source as a prefix.
+        assert!(v.replace("jame_user_main", "main").starts_with(vert.trim_end()));
+        assert!(f.replace("jame_user_main", "main").starts_with(frag.trim_end()));
+        // The game's own uniforms/outs are still declared exactly once.
+        assert_eq!(v.matches("uniform mat4 uModel;").count(), 1);
+        assert_eq!(f.matches("out vec4 FragColor;").count(), 1);
+    }
+
+    #[test]
+    fn render_params_without_shadows_field_load_disabled() {
+        let default = crate::profile::RenderParams::default();
+        assert!(!default.shadows.enabled);
+        let mut ron_text = ron::to_string(&default).unwrap();
+        let start = ron_text.find("shadows:").expect("serialized shadows field");
+        // Cut the `shadows: (...)` field out to emulate a pre-shadows profile.
+        let mut depth = 0i32;
+        let mut end = start;
+        for (i, c) in ron_text[start..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ron_text.replace_range(start..end, "");
+        let ron_text = ron_text.replace(",,", ",").replace("(,", "(").replace(",)", ")");
+        let old: crate::profile::RenderParams = ron::from_str(&ron_text).unwrap();
+        assert!(!old.shadows.enabled);
+    }
 }
