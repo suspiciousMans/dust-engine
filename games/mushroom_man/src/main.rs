@@ -12,7 +12,7 @@ use engine::app::{App, Context, Game};
 use engine::audio::AudioContext;
 use engine::behavior::{Behavior, BehaviorSlot, ScriptApi, ScriptBehavior};
 use engine::camera::{
-    CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, OrbitCamera, SpeedFov,
+    CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, SpeedFov,
     StrafeTilt,
 };
 use engine::class::ObjectClass;
@@ -43,8 +43,8 @@ use engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
 use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
 
-// The docked editor (F4): engine `EditorRuntime` hosted next to the original
-// F1/F2/F3/F5 dev editor. See the module docs.
+// The docked editor (F1/F2/F4): engine `EditorRuntime`, the game's only
+// editor. See the module docs.
 mod docked;
 use docked::DockedState;
 
@@ -968,7 +968,7 @@ enum PendingTexturePick {
 /// `true` in debug builds, `false` in release. `cargo build --release`
 /// (what `package.ps1` already uses for shipping) is treated as "this is
 /// the game a player gets," so it never enters `EditorMode::Edit`: no
-/// panels, no F1/F2/Tab/F5/F3, no orbit-camera drag. `cfg!()` is a
+/// dock, no editor camera, no F1/F2/F3/F4/F5. `cfg!()` is a
 /// compile-time constant, so every `if editor_available()` branch below
 /// is dead code in a release build, not just an unreachable runtime path.
 fn editor_available() -> bool {
@@ -1046,11 +1046,9 @@ struct Sandbox {
     shader_paths: (PathBuf, PathBuf, PathBuf),
     render_params: RenderParams,
     world: World,
-    camera: OrbitCamera,
     renderer: Option<Renderer>,
     profiles: Option<ProfileCycler>,
     ui: Option<EguiState>,
-    ui_visible: bool,
     /// Debug FPS/frame-time/entity/draw-call overlay, toggled from the F1
     /// panel — always available (Edit and Play mode), unlike `draw_hud`
     /// which is gameplay UI. `frame_times` is a small ring buffer of
@@ -1077,7 +1075,6 @@ struct Sandbox {
     levels: Vec<Level>,
     current_level_name: String,
     level_save_as_name: String,
-    level_ui_visible: bool,
     selected_entity: Option<Entity>,
     cube_mesh: Option<Arc<GpuMesh>>,
     plane_mesh: Option<Arc<GpuMesh>>,
@@ -1154,19 +1151,13 @@ struct Sandbox {
     /// `selected_character` — spawners get their own "Spawners" section
     /// since they have no `LevelObjectMeta`/`CharacterMeta`.
     selected_spawner: Option<Entity>,
-    /// Multi-select sets for batch delete/duplicate (Ctrl+click toggles
-    /// membership; a plain click resets the set to just that one entity).
-    /// `selected_entity`/`selected_character` remain "which one's detail
-    /// panel is shown" (always the most recently clicked), independent of
-    /// how many are in the batch-operation set.
-    selected_entities: HashSet<Entity>,
-    selected_characters: HashSet<Entity>,
-    /// Undo/redo: full-level snapshots (the same `Level` shape
-    /// `build_level_from_ecs`/`apply_level` already round-trip for save/
-    /// load), pushed by `push_undo_snapshot` before a discrete edit
-    /// (add/delete/duplicate) or a selection change (bundling a
-    /// slider-drag session on one object into a single undo step). Capped
-    /// so it can't grow unbounded across a long editing session.
+    /// Undo/redo for edits made in the Level tab (rigs, classes, characters,
+    /// spawners, emitters...), which the shell's command undo does not see:
+    /// full-level snapshots (the same `Level` shape `build_level_from_ecs`/
+    /// `apply_level` round-trip for save/load), pushed by
+    /// `push_undo_snapshot` before a discrete edit or a selection change
+    /// (bundling a slider-drag session on one object into a single undo
+    /// step). Capped so it can't grow unbounded across a long session.
     undo_stack: Vec<Level>,
     redo_stack: Vec<Level>,
     /// Last frame's selection tuple — compared each `draw_level_editor_ui`
@@ -1326,11 +1317,9 @@ impl Sandbox {
             shader_paths: (PathBuf::new(), PathBuf::new(), PathBuf::new()),
             render_params: RenderParams::default(),
             world: World::new(),
-            camera: OrbitCamera::new(Vec3::ZERO, 4.0),
             renderer: None,
             profiles: None,
             ui: None,
-            ui_visible: true,
             profiler_visible: true,
             frame_times: std::collections::VecDeque::new(),
             hot_reload: None,
@@ -1341,7 +1330,6 @@ impl Sandbox {
             levels: Vec::new(),
             current_level_name: String::from("default"),
             level_save_as_name: String::from("level_1"),
-            level_ui_visible: true,
             selected_entity: None,
             cube_mesh: None,
             particle_quad_mesh: None,
@@ -1369,8 +1357,6 @@ impl Sandbox {
             nav_grid: None,
             selected_character: None,
             selected_spawner: None,
-            selected_entities: HashSet::new(),
-            selected_characters: HashSet::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_undo_selection: (None, None, None, None),
@@ -2334,8 +2320,6 @@ impl Sandbox {
         self.selected_rig_part = None;
         self.selected_character = None;
         self.selected_spawner = None;
-        self.selected_entities.clear();
-        self.selected_characters.clear();
         self.despawned_since_load.clear();
         for obj in &level.objects {
             match self.spawn_level_object(gl, obj) {
@@ -2611,8 +2595,7 @@ impl Sandbox {
 
     /// Reconstructs a `LevelObject` for a single entity — the same
     /// per-entity logic `build_level_from_ecs`'s main loop uses, factored
-    /// out so it's also reusable by "duplicate selected"
-    /// (`duplicate_selected`). Returns `None` if `entity` has no
+    /// out of it. Returns `None` if `entity` has no
     /// `Transform`/`LevelObjectMeta` (e.g. it's a light or particle
     /// emitter, which have their own reconstruction below).
     fn level_object_from_entity(&self, entity: Entity) -> Option<LevelObject> {
@@ -2845,76 +2828,6 @@ impl Sandbox {
             log::error!("redo failed: {err}");
         }
         self.last_undo_selection = (None, None, None, None);
-    }
-
-    /// Ctrl+D — duplicates every entity in the active multi-select set(s),
-    /// nudged along X so copies never sit flush on top of the original
-    /// (the same offset convention `add_primitive` uses for staggering new
-    /// objects). The freshly-spawned copies become the new selection.
-    fn duplicate_selected(&mut self, gl: &glow::Context) {
-        if self.selected_entities.is_empty() && self.selected_characters.is_empty() {
-            return;
-        }
-        self.push_undo_snapshot();
-
-        let object_copies: Vec<LevelObject> = self
-            .selected_entities
-            .iter()
-            .filter_map(|&entity| self.level_object_from_entity(entity))
-            .map(|obj| LevelObject {
-                name: format!("{} Copy", obj.name),
-                position: [obj.position[0] + 1.0, obj.position[1], obj.position[2]],
-                ..obj
-            })
-            .collect();
-        let character_copies: Vec<CharacterInstance> = self
-            .selected_characters
-            .iter()
-            .filter_map(|&entity| self.character_instance_from_entity(entity))
-            .map(|instance| CharacterInstance {
-                name: format!("{} Copy", instance.name),
-                position: [instance.position[0] + 1.0, instance.position[1], instance.position[2]],
-                ..instance
-            })
-            .collect();
-
-        self.selected_entities.clear();
-        self.selected_characters.clear();
-        for obj in &object_copies {
-            match self.spawn_level_object(gl, obj) {
-                Ok(entity) => {
-                    self.selected_entity = Some(entity);
-                    self.selected_entities.insert(entity);
-                }
-                Err(err) => log::error!("failed to duplicate object '{}': {err}", obj.name),
-            }
-        }
-        for instance in &character_copies {
-            match self.spawn_character(gl, instance) {
-                Ok(entity) => {
-                    self.selected_character = Some(entity);
-                    self.selected_characters.insert(entity);
-                }
-                Err(err) => log::error!("failed to duplicate character '{}': {err}", instance.name),
-            }
-        }
-    }
-
-    /// Delete key — removes every entity in whichever multi-select set is
-    /// non-empty (batches the existing per-object "Delete" button action).
-    fn delete_selected(&mut self) {
-        if self.selected_entities.is_empty() && self.selected_characters.is_empty() {
-            return;
-        }
-        self.push_undo_snapshot();
-        for entity in self.selected_entities.drain() {
-            let _ = self.world.despawn(entity);
-        }
-        for entity in self.selected_characters.drain() {
-            let _ = self.world.despawn(entity);
-        }
-        self.selected_entity = None;
-        self.selected_character = None;
     }
 
     fn add_primitive(&mut self, gl: &glow::Context, kind: PrimitiveKind) {
@@ -4251,42 +4164,6 @@ impl Sandbox {
         }
     }
 
-    const EDITOR_CAMERA_MOVE_SPEED: f32 = 6.0;
-
-    /// WASD flies the Edit-mode `OrbitCamera`'s orbit target around on the
-    /// horizontal plane (mirrors `update_player_input`'s WASD-relative-to-
-    /// look-direction handling, flattened the same way so looking up/down
-    /// doesn't change how fast you glide); Space/Shift raise/lower it
-    /// straight along world Y. Mouse-drag orbit and scroll zoom are
-    /// unaffected — this only moves what the camera orbits *around*.
-    fn update_editor_camera_input(&mut self, ctx: &mut Context, dt: f32) {
-        let forward = self.camera.forward();
-        let right = self.camera.right();
-        let forward_flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
-        let right_flat = Vec3::new(right.x, 0.0, right.z).normalize_or_zero();
-
-        let mut move_dir = Vec3::ZERO;
-        if ctx.input.is_key_down(Keycode::W) {
-            move_dir += forward_flat;
-        }
-        if ctx.input.is_key_down(Keycode::S) {
-            move_dir -= forward_flat;
-        }
-        if ctx.input.is_key_down(Keycode::D) {
-            move_dir += right_flat;
-        }
-        if ctx.input.is_key_down(Keycode::A) {
-            move_dir -= right_flat;
-        }
-        if ctx.input.is_key_down(Keycode::Space) {
-            move_dir += Vec3::Y;
-        }
-        if ctx.input.is_key_down(Keycode::LShift) || ctx.input.is_key_down(Keycode::RShift) {
-            move_dir -= Vec3::Y;
-        }
-        self.camera.target += move_dir.normalize_or_zero() * Self::EDITOR_CAMERA_MOVE_SPEED * dt;
-    }
-
     /// `E`/gamepad-X dispatcher — offline or hosting, runs the normal local
     /// `interact()` below unchanged (the host is always authoritative for
     /// its own actions). Under `NetMode::Client`, every flavor of
@@ -4885,14 +4762,18 @@ impl Sandbox {
         }
 
         ui.heading("Level");
+        // Viewport, hierarchy and inspector edits are undone by the shell's own
+        // Ctrl+Z. These snapshots are the only undo for what this tab edits
+        // (rigs, classes, characters, spawners, emitters, music, textures...).
         ui.horizontal(|ui| {
-            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo (Ctrl+Z)")).clicked() {
+            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo tab edit")).clicked() {
                 self.undo(gl);
             }
-            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo (Ctrl+Shift+Z)")).clicked() {
+            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo tab edit")).clicked() {
                 self.redo(gl);
             }
         });
+        ui.small("Level-snapshot undo for edits made in this tab only. Ctrl+Z / Ctrl+Shift+Z undo viewport, hierarchy and inspector edits.");
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
                 self.save_current_level();
@@ -4996,29 +4877,8 @@ impl Sandbox {
         }
 
         ui.separator();
-        ui.heading("Scene Objects");
-        if self.selected_entities.len() > 1 {
-            ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_entities.len()));
-        }
-        let mut clicked_entity = None;
-        for (entity, meta) in self.world.query::<&LevelObjectMeta>().iter() {
-            let selected = self.selected_entities.contains(&entity);
-            if ui.selectable_label(selected, &meta.name).clicked() {
-                clicked_entity = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_entity {
-            self.selected_entity = Some(entity);
-            if ui.input(|i| i.modifiers.ctrl) {
-                if !self.selected_entities.remove(&entity) {
-                    self.selected_entities.insert(entity);
-                }
-            } else {
-                self.selected_entities.clear();
-                self.selected_entities.insert(entity);
-            }
-        }
-
+        ui.heading("Selected object");
+        ui.small("Pick objects in the Hierarchy or the viewport; this tab edits the selection.");
         ui.separator();
         if let Some(entity) = self.selected_entity {
             if self.world.contains(entity) {
@@ -5104,28 +4964,6 @@ impl Sandbox {
                 Err(err) => log::error!("failed to add character: {err}"),
             }
         }
-        if self.selected_characters.len() > 1 {
-            ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_characters.len()));
-        }
-        let mut clicked_character = None;
-        for (entity, meta) in self.world.query::<&CharacterMeta>().iter() {
-            let selected = self.selected_characters.contains(&entity);
-            if ui.selectable_label(selected, &meta.name).clicked() {
-                clicked_character = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_character {
-            self.selected_character = Some(entity);
-            if ui.input(|i| i.modifiers.ctrl) {
-                if !self.selected_characters.remove(&entity) {
-                    self.selected_characters.insert(entity);
-                }
-            } else {
-                self.selected_characters.clear();
-                self.selected_characters.insert(entity);
-            }
-        }
-
         ui.separator();
         if let Some(entity) = self.selected_character {
             if self.world.contains(entity) {
@@ -5169,17 +5007,6 @@ impl Sandbox {
             let entity = self.spawn_spawner(&instance);
             self.selected_spawner = Some(entity);
         }
-        let mut clicked_spawner = None;
-        for (entity, config) in self.world.query::<&SpawnerConfig>().iter() {
-            let selected = self.selected_spawner == Some(entity);
-            if ui.selectable_label(selected, &config.name).clicked() {
-                clicked_spawner = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_spawner {
-            self.selected_spawner = Some(entity);
-        }
-
         ui.separator();
         if let Some(entity) = self.selected_spawner {
             if self.world.contains(entity) {
@@ -5230,7 +5057,7 @@ impl Sandbox {
         }
 
         ui.separator();
-        ui.small("F2 toggle level editor \u{b7} F3 play/stop \u{b7} click an object below to select it");
+        ui.small("F3 play/stop \u{b7} F4 close the editor");
     }
 
     fn draw_selected_object_ui(&mut self, ui: &mut egui::Ui, gl: &glow::Context, entity: Entity) {
@@ -7128,36 +6955,16 @@ impl Game for Sandbox {
     }
 
     fn handle_event(&mut self, ctx: &mut Context, event: &Event) {
-        // F4 docked editor: it owns input while open (returns true if it
-        // consumed the event); the legacy handler below is for F1/F2/F3 mode.
+        // The docked editor owns input while it is open (returns true if it
+        // consumed the event); the handler below is Play mode and the closed
+        // editor (F3 play/stop, Esc, checkpoints, interact, dialogue keys).
         if self.docked_handle_event(ctx, event) {
             return;
         }
         if let Some(ui) = self.ui.as_mut() {
             ui.handle_event(event);
         }
-        let ui_wants_pointer = self
-            .ui
-            .as_ref()
-            .map(|ui| ui.wants_pointer_input())
-            .unwrap_or(false);
-        let ui_wants_keyboard = self
-            .ui
-            .as_ref()
-            .map(|ui| ui.wants_keyboard_input())
-            .unwrap_or(false);
-
-        let editing = editor_available() && self.mode == EditorMode::Edit;
-
         match *event {
-            Event::MouseMotion { xrel, yrel, .. }
-                if editing && !ui_wants_pointer && ctx.input.is_button_down(MouseButton::Left) =>
-            {
-                self.camera.orbit(-xrel as f32 * 0.01, -yrel as f32 * 0.01);
-            }
-            Event::MouseWheel { y, .. } if editing && !ui_wants_pointer => {
-                self.camera.zoom(-y as f32 * 0.3);
-            }
             Event::KeyDown {
                 keycode: Some(Keycode::Escape),
                 repeat: false,
@@ -7167,20 +6974,6 @@ impl Game for Sandbox {
                 EditorMode::Play => self.resume(ctx),
                 EditorMode::Edit => ctx.should_quit = true,
             },
-            Event::KeyDown {
-                keycode: Some(Keycode::F1),
-                repeat: false,
-                ..
-            } if editing => {
-                self.ui_visible = !self.ui_visible;
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::F2),
-                repeat: false,
-                ..
-            } if editing => {
-                self.level_ui_visible = !self.level_ui_visible;
-            }
             Event::KeyDown {
                 keycode: Some(Keycode::F3),
                 repeat: false,
@@ -7202,62 +6995,6 @@ impl Game for Sandbox {
                 ..
             } => {
                 self.load_checkpoint(ctx);
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Tab),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                if let Some(cycler) = self.profiles.as_mut() {
-                    let profile = cycler.next().clone();
-                    let gl = ctx.gl();
-                    let drawable_size = ctx.drawable_size();
-                    if let Err(err) = self.apply_profile(gl, drawable_size, &profile) {
-                        log::error!("failed to apply profile '{}': {err}", profile.name);
-                    }
-                }
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::F5),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                self.save_current_profile();
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Z),
-                repeat: false,
-                keymod,
-                ..
-            } if editing
-                && !ui_wants_keyboard
-                && (keymod.contains(sdl2::keyboard::Mod::LCTRLMOD) || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD)) =>
-            {
-                let gl = ctx.gl();
-                if keymod.contains(sdl2::keyboard::Mod::LSHIFTMOD) || keymod.contains(sdl2::keyboard::Mod::RSHIFTMOD) {
-                    self.redo(gl);
-                } else {
-                    self.undo(gl);
-                }
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::D),
-                repeat: false,
-                keymod,
-                ..
-            } if editing
-                && !ui_wants_keyboard
-                && (keymod.contains(sdl2::keyboard::Mod::LCTRLMOD) || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD)) =>
-            {
-                let gl = ctx.gl();
-                self.duplicate_selected(gl);
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Delete),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                self.delete_selected();
             }
             Event::KeyDown {
                 keycode: Some(Keycode::E),
@@ -7339,13 +7076,6 @@ impl Game for Sandbox {
             self.hud.tick(dt);
             self.screen_effects.tick(dt);
             self.smooth_networked_transforms(dt);
-        }
-
-        if self.mode == EditorMode::Edit && !self.docked.open {
-            let ui_wants_keyboard = self.ui.as_ref().map(|ui| ui.wants_keyboard_input()).unwrap_or(false);
-            if !ui_wants_keyboard {
-                self.update_editor_camera_input(ctx, dt);
-            }
         }
 
         if self.mode == EditorMode::Play && !self.paused {
@@ -7579,7 +7309,9 @@ impl Game for Sandbox {
         let drawable_size = ctx.drawable_size();
         let aspect = ctx.aspect_ratio();
         let (view, proj) = match self.mode {
-            EditorMode::Edit => (self.camera.view_matrix(), self.camera.projection_matrix(aspect)),
+            // Editor closed: the scene through the editor camera, unchanged
+            // since the dock was last open (no input moves it here).
+            EditorMode::Edit => self.docked_closed_view(aspect),
             EditorMode::Play => {
                 let eye = self.player_eye_position();
                 (self.fp_camera.view_matrix(eye), self.fp_camera.projection_matrix(aspect))
@@ -7618,53 +7350,24 @@ impl Game for Sandbox {
         };
         let profiler_visible = self.profiler_visible;
 
-        // Must happen before `self.ui.take()` below — texture registration
-        // needs `&mut EguiState`, which `ui_state.run`'s closure can't
-        // provide (it's already exclusively borrowed for the closure's
-        // duration). See `AssetBrowserState`'s doc comment.
-        if self.texture_asset_browser.is_open() {
-            if let Some(ui_state) = self.ui.as_mut() {
-                self.texture_asset_browser.ensure_thumbnails_loaded(gl, ui_state);
-            }
-        }
-
         // Editor overlay, drawn on top of the final (already-pixelated) image
         // at full window resolution so the UI itself stays crisp.
         let mut ui_state = self.ui.take().expect("ui set up in init");
         let editing = editor_available() && self.mode == EditorMode::Edit;
-        let ui_visible = self.ui_visible && editing;
-        let level_ui_visible = self.level_ui_visible && editing;
         let playing = self.mode == EditorMode::Play;
         let mut pause_menu_action: Option<PauseMenuAction> = None;
         let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
         let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
-        let mut picked_texture: Option<PathBuf> = None;
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if profiler_visible {
                 engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
             }
             if editing {
-                if let Some(path) = self.texture_asset_browser.show(egui_ctx, &self.asset_root) {
-                    picked_texture = Some(path);
-                }
-            }
-            if level_ui_visible {
-                egui::SidePanel::left("level_editor")
-                    .default_width(280.0)
-                    .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_level_editor_ui(ui, gl);
-                        });
+                egui::Area::new("editor_closed_hint".into()).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0)).show(egui_ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.label("Editor closed \u{b7} F1 / F2 / F4 open the editor \u{b7} F3 play \u{b7} Esc quit");
                     });
-            }
-            if ui_visible {
-                egui::SidePanel::right("editor")
-                    .default_width(300.0)
-                    .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_shader_editor_ui(ui, gl, drawable_size);
-                        });
-                    });
+                });
             }
             if playing {
                 egui::Area::new("play_mode_indicator".into())
@@ -7693,7 +7396,7 @@ impl Game for Sandbox {
         ui_state.paint(drawable_size, full_output);
         self.ui = Some(ui_state);
 
-        self.apply_ui_actions(ctx, picked_texture, pause_menu_action, multiplayer_action, appearance_action);
+        self.apply_ui_actions(ctx, None, pause_menu_action, multiplayer_action, appearance_action);
 
         Ok(())
     }
