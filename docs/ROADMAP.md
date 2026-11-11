@@ -10,16 +10,46 @@ The detailed plan, with tasks and acceptance tests, is in
 
 ## Where things stand
 
-- The engine is ~9.4k lines (standalone repo) with ECS, renderer, shader
-  profiles, editor panels, physics, pathfinding, AI, rigs, scripting, net,
-  audio, hot reload and a profiler.
-- **The engine has forked.** Dreamscape carries its own copy under
-  `engine/` that differs from this repo in 40 files (~1,765 changed lines),
-  including audio split into `audio/{native,web}.rs` while this repo still has
-  a single `audio.rs`. Features have been landing in the copy, not here.
-  Everything below depends on fixing that first.
-- The `Game` trait is `update(ctx, dt)` + `render(ctx)`. The engine offers no
-  structure beyond that, so every game hand-orders its own per-frame work.
+Updated 2026-11-11. Short version: the engine-side work for phases 0-5 exists
+and is tested, but **no game consumes it yet** and **none of the Dreamscape
+ports has been done**. Each phase's exit test is a Dreamscape change, so no
+phase is "done" by the roadmap's own rule.
+
+- The engine (this repo, ~46k lines under `engine/src`) has ECS, renderer,
+  shader profiles, legacy editor panels, a docked editor (`EditorRuntime`,
+  RON scenes, prefabs, Assets and UI Designer tabs), physics, pathfinding, AI,
+  rigs, scripting, net, audio with named tracks, hot reload, a profiler, and
+  the new `Schedule`/`Resources`, effects, `Tunables`/`Telemetry`, input
+  action maps, skeletal animation and headless harness.
+- Dreamscape's divergent engine copy was audited and merged into this repo
+  (`docs/fork-audit.md`). Pointing Dreamscape at this repo as a dependency
+  (tasks 0.3/0.4) is not done here and cannot be verified from this repo;
+  `docs/KNOWN-ISSUES.md` says to confirm it.
+- The `Game` trait is still `update(ctx, dt)` + `render(ctx)`. `Schedule`
+  exists, but the bundled games (`sandbox`, `mushroom_man`, `walkaround_demo`,
+  `physics-sandbox`) still hand-order their work in `main.rs`
+  (7-8k lines each for the first three).
+- Not built or exercised: the emscripten/web paths (cfg-gated, type-checked
+  at best), `SkinnedMesh` on a real GL context, and click-through use of the
+  docked editor. CI now has a Linux job alongside Windows; web is not gated.
+
+### Status by phase
+
+| # | Phase | Engine side | Still open | Status |
+|---|---|---|---|---|
+| 0 | Reconcile the fork | Audit written, Dreamscape superset merged, audio split into `audio/{native,web}.rs` | 0.3 Dreamscape on this repo as a dependency; 0.4 `nn_viz`, `dungeon_oxide`; 0.5 downstream-game CI job | Partial |
+| 1 | Effect primitives | `engine::effects`: `Lifetime`, `Fade`, `TextureOverride`, `tick`; unit-tested | 1.4 port dash ghosts/bursts/STILLNESS/PHASE; `MeshRenderer` has no alpha so `Fade` alpha is not rendered | Partial (engine done, no consumer) |
+| 2 | Audio buses | `AudioEngine` named tracks, gain/fade/mute, shared loop clock, `AudioBackend` trait, `NullBackend` for tests | 2.4 port adaptive music; web backend never built; games must call `audio.update()` | Partial (engine done, no consumer) |
+| 3 | Systems and scheduling | `Schedule` (stages, before/after, run conditions, cycle errors) and `Resources` | 3.4 run three Dreamscape features as registered systems; split `main.rs`; no bundled game runs a `Schedule` | Partial (engine done, no consumer) |
+| 4 | Headless test harness | `Headless`, `HeadlessInput`, `EditorHeadless`, `fakes`; used by the engine's own tests | The exit test (Stillness restores enemy textures) lives in Dreamscape; no game has headless tests | Partial |
+| 5 | Tunables and telemetry | `Tunables` (mtime/watcher reload, `for_build`), `Telemetry` CSV hook | 5.2/5.3 port Dreamscape's constants and balance CSV; no game loads a tunables file | Partial (engine done, no consumer) |
+| 6 | Data-driven unlocks | - | Not started (optional, game-side first) | Not started |
+
+Work outside the original phases that also landed in the engine (all
+unit-tested, none hand-driven end to end): the docked editor and its scene /
+prefab I/O, input action maps (`input_map`), skeletal animation, the UI
+designer, and POSIX `new_game.sh` / `package.sh`. See `docs/KNOWN-ISSUES.md`
+for the per-feature gaps.
 
 ## Phases
 
