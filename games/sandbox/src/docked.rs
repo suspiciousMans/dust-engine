@@ -373,6 +373,7 @@ impl Sandbox {
                     self.docked_captured = false;
                 }
                 ShellEvent::SceneNew | ShellEvent::SceneOpened(_) | ShellEvent::SceneSaved(_) => {}
+                _ => {}
             }
         }
     }

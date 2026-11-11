@@ -602,6 +602,7 @@ impl Sandbox {
                     self.docked.captured = false;
                 }
                 ShellEvent::SceneNew | ShellEvent::SceneOpened(_) | ShellEvent::SceneSaved(_) => {}
+                _ => {}
             }
         }
         // The game left Play by itself (e.g. restart): keep the shell in step.
