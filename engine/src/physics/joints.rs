@@ -403,4 +403,117 @@ mod tests {
         assert!(((pos(&w, e) - pivot).length() - 1.0).abs() < 0.02);
         assert!(pos(&w, e).y < 5.0);
     }
+
+    /// Everything observable about a headless run, as raw bits.
+    fn run_headless(use_world: bool) -> (Vec<u32>, usize) {
+        use crate::headless::Headless;
+        use crate::physics::{ColliderShape, PhysicsMaterial, TriggerEvents};
+        let mut h = Headless::new();
+        h.add_default_systems();
+        if use_world {
+            h.use_physics_world();
+        }
+        h.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)), Collider::aabb(Vec3::new(30.0, 0.5, 30.0))));
+        h.spawn((Transform::from_position(Vec3::new(0.0, 1.0, 0.0)), Collider::trigger(ColliderShape::Aabb { half_extents: Vec3::splat(1.5) })));
+        let mut s = 987654321u32;
+        let mut rnd = move || {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            (s >> 8) as f32 / (1u32 << 24) as f32
+        };
+        for i in 0..40 {
+            let shape = match i % 4 {
+                0 => ColliderShape::Sphere { radius: 0.4 },
+                1 => ColliderShape::Capsule { radius: 0.3, half_height: 0.4 },
+                2 => ColliderShape::Box { half_extents: Vec3::splat(0.4) },
+                _ => ColliderShape::Aabb { half_extents: Vec3::splat(0.35) },
+            };
+            h.spawn((
+                Transform::from_position(Vec3::new(rnd() * 8.0 - 4.0, 1.0 + i as f32 * 0.6, rnd() * 8.0 - 4.0)),
+                Collider::new(shape),
+                RigidBody { velocity: Vec3::new(rnd() - 0.5, 0.0, rnd() - 0.5), grounded: false },
+                PhysicsMaterial { friction: 0.5, restitution: 0.3 },
+            ));
+        }
+        // A 5-link chain, a rod pair and a spring pair, all in the same world.
+        let anchor = Vec3::new(10.0, 8.0, 0.0);
+        let mut prev: Option<Entity> = None;
+        for i in 0..5 {
+            let e = h.spawn((Transform::from_position(anchor + Vec3::new((i + 1) as f32 * 0.5, 0.0, 0.0)), Collider::sphere(0.1), RigidBody::default()));
+            let j = match prev {
+                None => Joint::distance_to_point(e, anchor, 0.5),
+                Some(p) => Joint::distance(p, e, 0.5),
+            };
+            h.spawn((j,));
+            prev = Some(e);
+        }
+        let a = h.spawn((Transform::from_position(Vec3::new(-10.0, 3.0, 0.0)), Collider::sphere(0.2), RigidBody::default()));
+        let b = h.spawn((Transform::from_position(Vec3::new(-8.0, 3.0, 0.0)), Collider::sphere(0.2), RigidBody::default()));
+        h.spawn((Joint::spring(a, b, 1.0, 60.0, 0.5),));
+        h.step_frames(600);
+
+        let mut bits = Vec::new();
+        let mut rows: Vec<_> = h
+            .world
+            .query::<(&Transform, &RigidBody)>()
+            .iter()
+            .map(|(e, (t, r))| (e, *t, *r))
+            .collect();
+        rows.sort_by_key(|(e, _, _)| *e);
+        let pw = h.resources.get::<PhysicsWorld>();
+        for (e, t, r) in &rows {
+            bits.push(e.to_bits().get() as u32);
+            bits.extend(t.position.to_array().map(f32::to_bits));
+            bits.extend(t.rotation.to_array().map(f32::to_bits));
+            bits.extend(r.velocity.to_array().map(f32::to_bits));
+            bits.push(r.grounded as u32);
+            bits.push(pw.as_ref().map_or(0, |p| p.is_sleeping(*e) as u32));
+        }
+        bits.push(h.resources.get::<TriggerEvents>().map_or(0, |t| t.len() as u32));
+        let asleep = pw.as_ref().map_or(0, |p| p.sleeping_count());
+        (bits, asleep)
+    }
+
+    #[test]
+    fn headless_run_with_joints_is_bit_identical_in_both_modes() {
+        for use_world in [false, true] {
+            let (a, asleep_a) = run_headless(use_world);
+            let (b, asleep_b) = run_headless(use_world);
+            assert!(a.len() > 500, "scene should be non-trivial: {}", a.len());
+            assert_eq!(a, b, "world={use_world}: runs diverged");
+            assert_eq!(asleep_a, asleep_b);
+            if use_world {
+                assert!(asleep_a > 0, "some loose bodies should have settled to sleep: {asleep_a}");
+            }
+        }
+    }
+
+    #[test]
+    fn five_link_chain_hangs_still_and_stays_finite() {
+        let mut w = hecs::World::new();
+        let anchor = Vec3::new(0.0, 10.0, 0.0);
+        let mut prev: Option<Entity> = None;
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let e = body(&mut w, anchor + Vec3::new((i + 1) as f32 * 0.5, 0.0, 0.0));
+            match prev {
+                None => w.spawn((Joint::distance_to_point(e, anchor, 0.5),)),
+                Some(p) => w.spawn((Joint::distance(p, e, 0.5),)),
+            };
+            ids.push(e);
+            prev = Some(e);
+        }
+        let mut pw = PhysicsWorld::new(PhysicsParams::default());
+        for _ in 0..600 {
+            pw.step_fixed(&mut w);
+        }
+        // Damping brings the swinging chain to rest hanging straight down, links intact.
+        let mut last = anchor;
+        for (i, &e) in ids.iter().enumerate() {
+            let p = pos(&w, e);
+            assert!(p.is_finite());
+            assert!(((p - last).length() - 0.5).abs() < 0.02, "link {i}");
+            last = p;
+        }
+        assert!(pos(&w, ids[4]).y < 10.0 - 2.2, "{:?}", pos(&w, ids[4]));
+    }
 }

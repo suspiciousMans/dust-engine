@@ -1,6 +1,6 @@
 //! Inspector registration for physics components.
 
-use super::{CharacterController, Collider, ColliderShape, CollisionLayers, LayerMask, PhysicsMaterial, RigidBody};
+use super::{CharacterController, Joint, Collider, ColliderShape, CollisionLayers, LayerMask, PhysicsMaterial, RigidBody};
 use crate::editor::inspector::{ComponentBuilder, Registry};
 
 fn bits_to_string(m: LayerMask) -> String {
@@ -19,8 +19,11 @@ fn string_to_bits(s: &str, old: LayerMask) -> LayerMask {
 }
 
 /// Registers `Collider`, `RigidBody`, `CollisionLayers`, `PhysicsMaterial`
-/// and `CharacterController` with the editor inspector.
+/// and `CharacterController` with the editor inspector. [`Joint`] holds entity
+/// references the inspector has no field type for, so it is registered clone-only
+/// (copied by duplicate / undo, not shown or edited).
 pub fn register_physics_components(reg: &mut Registry) {
+    reg.register_cloneable::<Joint>();
     reg.register(
         ComponentBuilder::new("Collider", || Collider::sphere(0.5))
             .enumeration(
