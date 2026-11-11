@@ -690,6 +690,19 @@ mod tests {
     }
 
     #[test]
+    fn ron_without_inverse_bind_accounts_for_root_transform() {
+        let text = r#"(
+            joints: [(name: "a", parent: None, translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0), scale: (1.0, 1.0, 1.0))],
+            root_transform: Some((1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 0.0, 0.0, 1.0)),
+            clips: [],
+        )"#;
+        let set = AnimationSet::from_ron_str(text).unwrap();
+        for p in set.skeleton.joint_palette(&set.skeleton.bind_pose()) {
+            assert!(close(p.transform_point3(Vec3::new(1.0, 2.0, 3.0)), Vec3::new(1.0, 2.0, 3.0)));
+        }
+    }
+
+    #[test]
     fn convert_hook_writes_a_loadable_file() {
         let dir = std::env::temp_dir().join(format!("skeletal_import_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

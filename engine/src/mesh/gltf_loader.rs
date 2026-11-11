@@ -44,7 +44,8 @@ pub struct GltfScene {
 /// (see `engine::rig`) — and **animation-channel import** — `RigClip`'s
 /// `Keyframe` is rotation-only, glTF's TRS animation channels are richer.
 /// A skinned/animated source file still imports fine, just at its bind
-/// pose with no animation data carried over.
+/// pose with no animation data carried over. For skins and animations use
+/// `skeletal::import::load_gltf_skinned` instead.
 pub fn load_gltf(path: &Path) -> anyhow::Result<GltfScene> {
     let (document, buffers, images) = gltf::import(path)?;
     let mut meshes = Vec::new();
