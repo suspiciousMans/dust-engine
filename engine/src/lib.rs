@@ -13,6 +13,7 @@ pub mod headless;
 pub mod hotreload;
 pub mod hud;
 pub mod input;
+pub mod input_map;
 pub mod level;
 pub mod material;
 pub mod mesh;

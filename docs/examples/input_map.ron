@@ -1,0 +1,84 @@
+// Example action map for `engine::input_map::ActionMap`.
+//
+// Load with `ActionMap::from_ron(text)` (reader uses IMPLICIT_SOME, so
+// `context: "gameplay"` needs no `Some(..)`). Everything marked "default" may be
+// omitted. User rebinds are stored separately (see `ActionMap::save_overrides`)
+// and layered over this file with `ActionMap::load_layered`.
+//
+// Names:
+//   Key("..")        SDL key names: "W", "Space", "Left Shift", "Return", "Up", "F5"
+//   Mouse("..")      "Left" "Middle" "Right" "X1" "X2"
+//   PadButton("..")  "A" "B" "X" "Y" "Back" "Start" "LeftShoulder" "RightShoulder"
+//                    "LeftStick" "RightStick" "DPadUp" "DPadDown" "DPadLeft" "DPadRight"
+//   PadAxis(axis:..) "LeftX" "LeftY" "RightX" "RightY" "TriggerLeft" "TriggerRight"
+//                    sign: Both (default) | Positive | Negative, deadzone default 0.2
+//
+// Vec2 convention: +x right, +y UP (Stick inverts SDL's down-positive Y unless
+// `invert_y: false`).
+(
+    version: 1,
+    // Order = priority (later is higher). An `exclusive` enabled context mutes
+    // every context declared before it (actions with no context stay live).
+    contexts: [
+        (name: "gameplay"),
+        (name: "menu", enabled: false, exclusive: true),
+    ],
+    actions: [
+        (
+            name: "move",
+            label: "Move",
+            context: "gameplay",
+            bindings: [
+                Composite(up: Key("W"), down: Key("S"), left: Key("A"), right: Key("D")),
+                Composite(up: Key("Up"), down: Key("Down"), left: Key("Left"), right: Key("Right")),
+                Stick(x: "LeftX", y: "LeftY", deadzone: 0.25),
+            ],
+        ),
+        (
+            name: "look_x",
+            label: "Look horizontally",
+            context: "gameplay",
+            bindings: [PadAxis(axis: "RightX", deadzone: 0.15)],
+        ),
+        (
+            name: "jump",
+            label: "Jump",
+            context: "gameplay",
+            bindings: [Key("Space"), PadButton("A")],
+        ),
+        (
+            name: "fire",
+            label: "Fire",
+            context: "gameplay",
+            bindings: [Mouse("Left"), PadAxis(axis: "TriggerRight", sign: Positive, deadzone: 0.1)],
+        ),
+        (
+            name: "throttle",
+            label: "Throttle",
+            context: "gameplay",
+            bindings: [Pair(negative: Key("Q"), positive: Key("E"))],
+        ),
+        (
+            name: "pause",
+            label: "Pause / back",
+            // No context: always active, even in the menu.
+            bindings: [Key("Escape"), PadButton("Start")],
+            rebindable: false,
+        ),
+        (
+            name: "ui_accept",
+            label: "Accept",
+            context: "menu",
+            bindings: [Key("Return"), PadButton("A")],
+        ),
+        (
+            name: "ui_nav",
+            label: "Navigate",
+            context: "menu",
+            bindings: [
+                Composite(up: Key("Up"), down: Key("Down"), left: Key("Left"), right: Key("Right")),
+                Composite(up: PadButton("DPadUp"), down: PadButton("DPadDown"), left: PadButton("DPadLeft"), right: PadButton("DPadRight")),
+            ],
+        ),
+    ],
+)
