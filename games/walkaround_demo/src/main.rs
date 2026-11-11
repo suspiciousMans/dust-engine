@@ -12,7 +12,7 @@ use engine::app::{App, Context, Game};
 use engine::audio::AudioContext;
 use engine::behavior::{Behavior, BehaviorSlot, NativeBobBehavior, ScriptApi, ScriptBehavior};
 use engine::camera::{
-    CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, OrbitCamera, SpeedFov,
+    CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, SpeedFov,
     StrafeTilt,
 };
 use engine::class::ObjectClass;
@@ -38,7 +38,6 @@ use engine::renderer::{PostParams, Renderer};
 use engine::sdl2::controller::Button as ControllerButton;
 use engine::sdl2::event::Event;
 use engine::sdl2::keyboard::Keycode;
-use engine::sdl2::mouse::MouseButton;
 use engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
 use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
@@ -165,7 +164,7 @@ fn default_level() -> Level {
     // Two instances of the "barrel" class — demonstrates the class/family
     // system: mesh/texture/scale/physics all come from `classes/barrel.ron`
     // at spawn time, not from the fields below (kept only as a fallback in
-    // case the class is ever deleted). Edit the class in F2 and click
+    // case the class is ever deleted). Edit the class in the editor and click
     // "Apply to All Instances" to see both barrels update together.
     let make_barrel = |name: &str, x: f32| LevelObject {
         name: name.to_string(),
@@ -678,7 +677,7 @@ enum PendingTexturePick {
 /// `true` in debug builds, `false` in release. `cargo build --release`
 /// (what `package.ps1` already uses for shipping) is treated as "this is
 /// the game a player gets," so it never enters `EditorMode::Edit`: no
-/// panels, no F1/F2/Tab/F5/F3, no orbit-camera drag. `cfg!()` is a
+/// docked editor, no F1/F2/F3/F4. `cfg!()` is a
 /// compile-time constant, so every `if editor_available()` branch below
 /// is dead code in a release build, not just an unreachable runtime path.
 fn editor_available() -> bool {
@@ -708,8 +707,8 @@ fn number_key_index(keycode: Keycode) -> Option<usize> {
 struct NativeBehaviorDemoMarker;
 
 /// Tags a rig instance's root entity (see `spawn_rig_instance`) so it can be
-/// listed in the F2 "Rigs" section separately from the flat "Scene Objects"
-/// outliner, and so `build_level_from_ecs` can reconstruct `Level.rig_instances`.
+/// listed in the Selected / Create host tabs separately from the shell hierarchy
+/// (which lists everything), and so `build_level_from_ecs` can reconstruct `Level.rig_instances`.
 struct RigRoot {
     name: String,
     rig_path: PathBuf,
@@ -761,13 +760,11 @@ struct Sandbox {
     shader_paths: (PathBuf, PathBuf, PathBuf),
     render_params: RenderParams,
     world: World,
-    camera: OrbitCamera,
     renderer: Option<Renderer>,
     profiles: Option<ProfileCycler>,
     ui: Option<EguiState>,
-    ui_visible: bool,
-    /// Debug FPS/frame-time/entity/draw-call overlay, toggled from the F1
-    /// panel — always available (Edit and Play mode), unlike `draw_hud`
+    /// Debug FPS/frame-time/entity/draw-call overlay, toggled from the Render
+    /// tab — always available (Edit and Play mode), unlike `draw_hud`
     /// which is gameplay UI. `frame_times` is a small ring buffer of
     /// recent `dt` samples, averaged each frame for a less jittery FPS
     /// reading than a single-frame instantaneous value.
@@ -777,7 +774,7 @@ struct Sandbox {
     /// convention as `audio: Option<AudioContext>`) or in a shipped build
     /// (`init` only starts it when `editor_available()`).
     hot_reload: Option<HotReloadWatcher>,
-    /// F2 panel: in-editor texture thumbnail browser, opened by a "Browse
+    /// editor panel: in-editor texture thumbnail browser, opened by a "Browse
     /// Texture..." button (alongside the existing OS-dialog "Assign
     /// Texture..." button, not replacing it) and `pending_texture_pick`
     /// tracking which entity/class it was opened for.
@@ -792,7 +789,6 @@ struct Sandbox {
     levels: Vec<Level>,
     current_level_name: String,
     level_save_as_name: String,
-    level_ui_visible: bool,
     selected_entity: Option<Entity>,
     cube_mesh: Option<Arc<GpuMesh>>,
     plane_mesh: Option<Arc<GpuMesh>>,
@@ -806,7 +802,7 @@ struct Sandbox {
     paused: bool,
     fp_camera: FirstPersonCamera,
     /// Optional walking view-bob, applied on top of `fp_camera` in
-    /// `player_eye_position`. Toggle/tune live via the F1 panel's "Camera"
+    /// `player_eye_position`. Toggle/tune live via the Render tab's "Camera"
     /// section.
     head_bob: HeadBob,
     /// Momentary camera jitter — fired via `ScriptApi::camera_shake` or a
@@ -839,15 +835,15 @@ struct Sandbox {
     trigger_overlaps: HashSet<(Entity, Entity)>,
     /// Total seconds since startup — stored (rather than read from `Context`
     /// each time) since scripts can be dispatched from places without a
-    /// `Context` handy (spawning, the F2 panel).
+    /// `Context` handy (spawning, the editor panel).
     elapsed_time: f32,
-    /// F2 panel: whether the selected object's script is being edited
+    /// editor panel: whether the selected object's script is being edited
     /// inline, and the text buffer backing that `TextEdit`.
     script_editor_open: bool,
     script_editor_buffer: String,
     rigs_dir: PathBuf,
     rigs: Vec<RigAsset>,
-    /// F2 panel: the currently selected rig *instance* (its root entity)
+    /// editor panel: the currently selected rig *instance* (its root entity)
     /// and, within it, the currently selected *part* for hand-posing — kept
     /// separate from `selected_entity` since rigs get their own "Rigs"
     /// section rather than sharing the flat Scene Objects outliner.
@@ -857,22 +853,15 @@ struct Sandbox {
     /// before the first level ever loads. Used by `engine::ai::step` for
     /// character pathfinding.
     nav_grid: Option<NavGrid>,
-    /// F2 panel: the currently selected character entity, mirroring
+    /// editor panel: the currently selected character entity, mirroring
     /// `selected_rig` — characters get their own "Characters" section
     /// rather than sharing the flat Scene Objects outliner, since they
     /// have no `LevelObjectMeta`.
     selected_character: Option<Entity>,
-    /// F2 panel: the currently selected spawner entity, mirroring
+    /// editor panel: the currently selected spawner entity, mirroring
     /// `selected_character` — spawners get their own "Spawners" section
     /// since they have no `LevelObjectMeta`/`CharacterMeta`.
     selected_spawner: Option<Entity>,
-    /// Multi-select sets for batch delete/duplicate (Ctrl+click toggles
-    /// membership; a plain click resets the set to just that one entity).
-    /// `selected_entity`/`selected_character` remain "which one's detail
-    /// panel is shown" (always the most recently clicked), independent of
-    /// how many are in the batch-operation set.
-    selected_entities: HashSet<Entity>,
-    selected_characters: HashSet<Entity>,
     /// Undo/redo: full-level snapshots (the same `Level` shape
     /// `build_level_from_ecs`/`apply_level` already round-trip for save/
     /// load), pushed by `push_undo_snapshot` before a discrete edit
@@ -893,11 +882,11 @@ struct Sandbox {
     new_clip_looping: bool,
     classes_dir: PathBuf,
     classes: Vec<ObjectClass>,
-    /// F2 panel: the currently selected *class* (an index into `classes`,
+    /// editor panel: the currently selected *class* (an index into `classes`,
     /// not an ECS entity — a class is plain data, not a live thing).
     selected_class: Option<usize>,
     class_new_name: String,
-    /// F2 panel: transient input buffer for the "Add Particle Emitter"
+    /// editor panel: transient input buffer for the "Add Particle Emitter"
     /// naming — actual per-emitter properties are edited on the selected
     /// entity's own `ParticleEmitter` component, not buffered here.
     particle_emitter_new_name: String,
@@ -918,10 +907,10 @@ struct Sandbox {
     saves_dir: PathBuf,
     /// The current level's background music, if any — mirrors
     /// `Level::music_path` and is set/cleared by `apply_level`, edited via
-    /// the F2 panel's "Assign Music.../Stop Music", and written back out by
+    /// the editor panel's "Assign Music.../Stop Music", and written back out by
     /// `build_level_from_ecs`.
     current_music_path: Option<PathBuf>,
-    /// Persists the F2 panel's volume slider across level loads, since
+    /// Persists the editor panel's volume slider across level loads, since
     /// `play_music_file` itself has no volume parameter — re-applied via
     /// `set_music_volume` every time music (re)starts.
     music_volume: f32,
@@ -953,7 +942,7 @@ struct Sandbox {
     /// self-mesh regardless of this value. Transient — not persisted to
     /// `SaveData`.
     local_appearance: Option<PathBuf>,
-    /// F2-panel-style transient input buffers for the multiplayer panel's
+    /// editor-panel-style transient input buffers for the multiplayer panel's
     /// "Address"/"Name" fields, persisted across frames the same way
     /// `level_save_as_name` already is.
     net_join_address: String,
@@ -1039,11 +1028,9 @@ impl Sandbox {
             shader_paths: (PathBuf::new(), PathBuf::new(), PathBuf::new()),
             render_params: RenderParams::default(),
             world: World::new(),
-            camera: OrbitCamera::new(Vec3::ZERO, 4.0),
             renderer: None,
             profiles: None,
             ui: None,
-            ui_visible: true,
             profiler_visible: true,
             frame_times: std::collections::VecDeque::new(),
             hot_reload: None,
@@ -1054,7 +1041,6 @@ impl Sandbox {
             levels: Vec::new(),
             current_level_name: String::from("default"),
             level_save_as_name: String::from("level_1"),
-            level_ui_visible: true,
             selected_entity: None,
             cube_mesh: None,
             particle_quad_mesh: None,
@@ -1082,8 +1068,6 @@ impl Sandbox {
             nav_grid: None,
             selected_character: None,
             selected_spawner: None,
-            selected_entities: HashSet::new(),
-            selected_characters: HashSet::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_undo_selection: (None, None, None, None),
@@ -1376,7 +1360,7 @@ impl Sandbox {
             }
             MeshSource::GltfFile(path) => {
                 // Same "first entry only" convention as ObjFile above — a
-                // multi-node glTF is better imported as a rig (F2 panel's
+                // multi-node glTF is better imported as a rig (editor panel's
                 // "Import glTF as Rig...") than collapsed into one object.
                 let scene = load_gltf(&self.asset_root.join(path))?;
                 let entry = scene
@@ -1442,7 +1426,7 @@ impl Sandbox {
     /// Called automatically at the end of `apply_level` (mirroring
     /// `NavGrid::bake` — cheap enough to always recompute fresh on every
     /// level load/undo/redo, never persisted to `Level`/RON) and also
-    /// exposed as an F2 "Rebake Lighting" button for previewing a moved
+    /// exposed as an the editor "Rebake Lighting" button for previewing a moved
     /// static light without a full reload.
     fn bake_static_lighting(&mut self, gl: &glow::Context) {
         let static_lights: Vec<(Vec3, Vec3, f32, f32)> = self
@@ -1670,7 +1654,7 @@ impl Sandbox {
     }
 
     /// Spawns a point light: `Transform` + `Light` + `LevelObjectMeta` (name
-    /// only, no mesh/texture) so it shares the F2 outliner's selection code
+    /// only, no mesh/texture) so it shares the hierarchy's selection code
     /// with mesh objects while carrying its own color/intensity/range fields.
     fn spawn_level_light(&mut self, light: &LevelLight) -> Entity {
         self.world.spawn((
@@ -1813,7 +1797,7 @@ impl Sandbox {
     /// function's plain-`Transform`-parent fallback). No `Rig`/
     /// `RigAnimator`/`RigRoot` involved — no animation for player rigs in
     /// v1, so nothing needs to drive clip playback, and this deliberately
-    /// keeps player proxies out of the F2 "Rigs" panel (which only lists
+    /// keeps player proxies out of the Selected-rig panel (which only lists
     /// `RigRoot` entities).
     fn spawn_player_rig_visual(
         &mut self,
@@ -2021,7 +2005,7 @@ impl Sandbox {
     /// Spawns a placed periodic spawner: `Transform` (its position is where
     /// spawned characters appear around, via `spawn_radius`) +
     /// `SpawnerConfig`/`SpawnerState`. No mesh/collider of its own — it's a
-    /// logic-only marker, drawn nowhere, listed only in the F2 panel's own
+    /// logic-only marker, drawn nowhere, listed only in the editor panel's own
     /// "Spawners" outliner (mirrors how `CharacterMeta`/characters get
     /// their own section rather than sharing "Scene Objects").
     fn spawn_spawner(&mut self, instance: &SpawnerInstance) -> Entity {
@@ -2047,8 +2031,6 @@ impl Sandbox {
         self.selected_rig_part = None;
         self.selected_character = None;
         self.selected_spawner = None;
-        self.selected_entities.clear();
-        self.selected_characters.clear();
         self.despawned_since_load.clear();
         for obj in &level.objects {
             if let Err(err) = self.spawn_level_object(gl, obj) {
@@ -2337,8 +2319,7 @@ impl Sandbox {
 
     /// Reconstructs a `LevelObject` for a single entity — the same
     /// per-entity logic `build_level_from_ecs`'s main loop uses, factored
-    /// out so it's also reusable by "duplicate selected"
-    /// (`duplicate_selected`). Returns `None` if `entity` has no
+    /// out so other callers can reuse it. Returns `None` if `entity` has no
     /// `Transform`/`LevelObjectMeta` (e.g. it's a light or particle
     /// emitter, which have their own reconstruction below).
     fn level_object_from_entity(&self, entity: Entity) -> Option<LevelObject> {
@@ -2502,7 +2483,7 @@ impl Sandbox {
     /// Snapshots the currently-loaded level's live ECS state back into
     /// `self.levels`'s cached entry for it (the same `build_level_from_ecs`
     /// round-trip `push_undo_snapshot`/`save_current_level` already use) —
-    /// call this just before switching to a *different* level (F2 "Load"
+    /// call this just before switching to a *different* level (the editor "Load"
     /// click). `self.levels` is otherwise only populated once at boot, so
     /// without this, any in-session edit that was never explicitly saved to
     /// disk (e.g. an assigned character texture, a moved object) is lost
@@ -2591,76 +2572,6 @@ impl Sandbox {
             log::error!("redo failed: {err}");
         }
         self.last_undo_selection = (None, None, None, None);
-    }
-
-    /// Ctrl+D — duplicates every entity in the active multi-select set(s),
-    /// nudged along X so copies never sit flush on top of the original
-    /// (the same offset convention `add_primitive` uses for staggering new
-    /// objects). The freshly-spawned copies become the new selection.
-    fn duplicate_selected(&mut self, gl: &glow::Context) {
-        if self.selected_entities.is_empty() && self.selected_characters.is_empty() {
-            return;
-        }
-        self.push_undo_snapshot();
-
-        let object_copies: Vec<LevelObject> = self
-            .selected_entities
-            .iter()
-            .filter_map(|&entity| self.level_object_from_entity(entity))
-            .map(|obj| LevelObject {
-                name: format!("{} Copy", obj.name),
-                position: [obj.position[0] + 1.0, obj.position[1], obj.position[2]],
-                ..obj
-            })
-            .collect();
-        let character_copies: Vec<CharacterInstance> = self
-            .selected_characters
-            .iter()
-            .filter_map(|&entity| self.character_instance_from_entity(entity))
-            .map(|instance| CharacterInstance {
-                name: format!("{} Copy", instance.name),
-                position: [instance.position[0] + 1.0, instance.position[1], instance.position[2]],
-                ..instance
-            })
-            .collect();
-
-        self.selected_entities.clear();
-        self.selected_characters.clear();
-        for obj in &object_copies {
-            match self.spawn_level_object(gl, obj) {
-                Ok(entity) => {
-                    self.selected_entity = Some(entity);
-                    self.selected_entities.insert(entity);
-                }
-                Err(err) => log::error!("failed to duplicate object '{}': {err}", obj.name),
-            }
-        }
-        for instance in &character_copies {
-            match self.spawn_character(gl, instance) {
-                Ok(entity) => {
-                    self.selected_character = Some(entity);
-                    self.selected_characters.insert(entity);
-                }
-                Err(err) => log::error!("failed to duplicate character '{}': {err}", instance.name),
-            }
-        }
-    }
-
-    /// Delete key — removes every entity in whichever multi-select set is
-    /// non-empty (batches the existing per-object "Delete" button action).
-    fn delete_selected(&mut self) {
-        if self.selected_entities.is_empty() && self.selected_characters.is_empty() {
-            return;
-        }
-        self.push_undo_snapshot();
-        for entity in self.selected_entities.drain() {
-            let _ = self.world.despawn(entity);
-        }
-        for entity in self.selected_characters.drain() {
-            let _ = self.world.despawn(entity);
-        }
-        self.selected_entity = None;
-        self.selected_character = None;
     }
 
     fn add_primitive(&mut self, gl: &glow::Context, kind: PrimitiveKind) {
@@ -2807,7 +2718,7 @@ impl Sandbox {
         }
     }
 
-    /// F2 "Assign Music..." — picks an audio file, starts it looping
+    /// the editor "Assign Music..." — picks an audio file, starts it looping
     /// immediately (so the change is audible right away, matching how
     /// "Assign Texture..." updates the live entity), and records it as
     /// `current_music_path` so it round-trips when the level is saved.
@@ -3008,7 +2919,7 @@ impl Sandbox {
                 // Tag every character/dynamic prop already in the level
                 // too, so they show up in `named_net_ids` for clients that
                 // join afterward and in the periodic `Snapshot` broadcast.
-                // New ones can only appear afterward via a spawner (F2
+                // New ones can only appear afterward via a spawner (editor
                 // editing is Edit-mode-only, mutually exclusive with this
                 // Play-mode-only panel) — those get tagged individually as
                 // they spawn instead, via `assign_net_id_if_hosting`.
@@ -3928,42 +3839,6 @@ impl Sandbox {
         }
     }
 
-    const EDITOR_CAMERA_MOVE_SPEED: f32 = 6.0;
-
-    /// WASD flies the Edit-mode `OrbitCamera`'s orbit target around on the
-    /// horizontal plane (mirrors `update_player_input`'s WASD-relative-to-
-    /// look-direction handling, flattened the same way so looking up/down
-    /// doesn't change how fast you glide); Space/Shift raise/lower it
-    /// straight along world Y. Mouse-drag orbit and scroll zoom are
-    /// unaffected — this only moves what the camera orbits *around*.
-    fn update_editor_camera_input(&mut self, ctx: &mut Context, dt: f32) {
-        let forward = self.camera.forward();
-        let right = self.camera.right();
-        let forward_flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
-        let right_flat = Vec3::new(right.x, 0.0, right.z).normalize_or_zero();
-
-        let mut move_dir = Vec3::ZERO;
-        if ctx.input.is_key_down(Keycode::W) {
-            move_dir += forward_flat;
-        }
-        if ctx.input.is_key_down(Keycode::S) {
-            move_dir -= forward_flat;
-        }
-        if ctx.input.is_key_down(Keycode::D) {
-            move_dir += right_flat;
-        }
-        if ctx.input.is_key_down(Keycode::A) {
-            move_dir -= right_flat;
-        }
-        if ctx.input.is_key_down(Keycode::Space) {
-            move_dir += Vec3::Y;
-        }
-        if ctx.input.is_key_down(Keycode::LShift) || ctx.input.is_key_down(Keycode::RShift) {
-            move_dir -= Vec3::Y;
-        }
-        self.camera.target += move_dir.normalize_or_zero() * Self::EDITOR_CAMERA_MOVE_SPEED * dt;
-    }
-
     /// `E`/gamepad-X dispatcher — offline or hosting, runs the normal local
     /// `interact()` below unchanged (the host is always authoritative for
     /// its own actions). Under `NetMode::Client`, every flavor of
@@ -4461,52 +4336,6 @@ impl Sandbox {
         self.with_behavior(trigger, |behavior, api| behavior.on_trigger_exit(api, "Player"));
     }
 
-    fn draw_level_editor_ui(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
-        self.track_undo_selection();
-        self.ui_level_section(ui, gl);
-
-        ui.separator();
-        ui.heading("Scene Objects");
-        self.ui_object_list(ui);
-
-        ui.separator();
-        self.ui_selected_object(ui, gl);
-
-        ui.separator();
-        ui.heading("Rigs");
-        self.ui_rig_create(ui, gl);
-        self.ui_rig_list(ui);
-
-        ui.separator();
-        self.ui_selected_rig(ui, gl);
-
-        ui.separator();
-        ui.heading("Characters");
-        self.ui_character_create(ui, gl);
-        self.ui_character_list(ui);
-
-        ui.separator();
-        self.ui_selected_character(ui, gl);
-
-        ui.separator();
-        ui.heading("Spawners");
-        self.ui_spawner_create(ui);
-        self.ui_spawner_list(ui);
-
-        ui.separator();
-        self.ui_selected_spawner(ui);
-
-        ui.separator();
-        ui.heading("Classes");
-        self.ui_class_create(ui, gl);
-
-        ui.separator();
-        self.ui_selected_class(ui, gl);
-
-        ui.separator();
-        ui.small("F2 toggle level editor \u{b7} F3 play/stop \u{b7} click an object below to select it");
-    }
-
     /// Bundles a whole slider-drag editing session on one object into a
     /// single undo step (see the body for the rule).
     fn track_undo_selection(&mut self) {
@@ -4523,11 +4352,18 @@ impl Sandbox {
 
     fn ui_level_section(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         ui.heading("Level");
+        // Rigs, classes, characters, spawners, lights, emitters and music have no shell
+        // commands, so these panels keep their own whole-level snapshot undo. Gizmo moves,
+        // Duplicate and Delete in the viewport use the shell's Ctrl+Z / Ctrl+Shift+Z instead.
         ui.horizontal(|ui| {
-            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo (Ctrl+Z)")).clicked() {
+            ui.label("Panel undo:").on_hover_text(
+                "Undoes edits made in the Level / Selected / Create tabs (snapshot of the whole level). \
+                 Viewport gizmo edits, Duplicate and Delete are undone with Ctrl+Z in the editor.",
+            );
+            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo")).clicked() {
                 self.undo(gl);
             }
-            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo (Ctrl+Shift+Z)")).clicked() {
+            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo")).clicked() {
                 self.redo(gl);
             }
         });
@@ -4634,30 +4470,6 @@ impl Sandbox {
         }
     }
 
-    fn ui_object_list(&mut self, ui: &mut egui::Ui) {
-        if self.selected_entities.len() > 1 {
-            ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_entities.len()));
-        }
-        let mut clicked_entity = None;
-        for (entity, meta) in self.world.query::<&LevelObjectMeta>().iter() {
-            let selected = self.selected_entities.contains(&entity);
-            if ui.selectable_label(selected, &meta.name).clicked() {
-                clicked_entity = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_entity {
-            self.selected_entity = Some(entity);
-            if ui.input(|i| i.modifiers.ctrl) {
-                if !self.selected_entities.remove(&entity) {
-                    self.selected_entities.insert(entity);
-                }
-            } else {
-                self.selected_entities.clear();
-                self.selected_entities.insert(entity);
-            }
-        }
-    }
-
     fn ui_selected_object(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if let Some(entity) = self.selected_entity {
             if self.world.contains(entity) {
@@ -4691,20 +4503,6 @@ impl Sandbox {
             if let Some(i) = add_instance_of {
                 self.add_rig_instance(gl, i);
             }
-        }
-    }
-
-    fn ui_rig_list(&mut self, ui: &mut egui::Ui) {
-        let mut clicked_rig = None;
-        for (entity, root) in self.world.query::<&RigRoot>().iter() {
-            let selected = self.selected_rig == Some(entity);
-            if ui.selectable_label(selected, &root.name).clicked() {
-                clicked_rig = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_rig {
-            self.selected_rig = Some(entity);
-            self.selected_rig_part = None;
         }
     }
 
@@ -4744,30 +4542,6 @@ impl Sandbox {
             match self.spawn_character(gl, &instance) {
                 Ok(entity) => self.selected_character = Some(entity),
                 Err(err) => log::error!("failed to add character: {err}"),
-            }
-        }
-    }
-
-    fn ui_character_list(&mut self, ui: &mut egui::Ui) {
-        if self.selected_characters.len() > 1 {
-            ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_characters.len()));
-        }
-        let mut clicked_character = None;
-        for (entity, meta) in self.world.query::<&CharacterMeta>().iter() {
-            let selected = self.selected_characters.contains(&entity);
-            if ui.selectable_label(selected, &meta.name).clicked() {
-                clicked_character = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_character {
-            self.selected_character = Some(entity);
-            if ui.input(|i| i.modifiers.ctrl) {
-                if !self.selected_characters.remove(&entity) {
-                    self.selected_characters.insert(entity);
-                }
-            } else {
-                self.selected_characters.clear();
-                self.selected_characters.insert(entity);
             }
         }
     }
@@ -4813,19 +4587,6 @@ impl Sandbox {
                 spawn_radius: 2.0,
             };
             let entity = self.spawn_spawner(&instance);
-            self.selected_spawner = Some(entity);
-        }
-    }
-
-    fn ui_spawner_list(&mut self, ui: &mut egui::Ui) {
-        let mut clicked_spawner = None;
-        for (entity, config) in self.world.query::<&SpawnerConfig>().iter() {
-            let selected = self.selected_spawner == Some(entity);
-            if ui.selectable_label(selected, &config.name).clicked() {
-                clicked_spawner = Some(entity);
-            }
-        }
-        if let Some(entity) = clicked_spawner {
             self.selected_spawner = Some(entity);
         }
     }
@@ -5825,7 +5586,7 @@ impl Sandbox {
         Some(self.rigs.len() - 1)
     }
 
-    /// F2 "Import glTF as Rig..." — see `import_gltf_as_rig_asset` for the
+    /// the editor "Import glTF as Rig..." — see `import_gltf_as_rig_asset` for the
     /// actual glTF-to-`RigAsset` conversion; this just also places a new
     /// level instance of the result, immediately usable via the existing
     /// "Add instance of" list, same as any hand-authored rig.
@@ -5837,7 +5598,7 @@ impl Sandbox {
 
     /// Appearance panel's "Import New Model..." — reuses
     /// `import_gltf_as_rig_asset` (the same glTF-to-`RigAsset` pipeline as
-    /// the F2 editor's "Import glTF as Rig...") but, instead of placing a
+    /// the editor's "Import glTF as Rig...") but, instead of placing a
     /// level instance, adopts the result as the local player's own
     /// appearance via `select_appearance`.
     fn pick_new_appearance_model(&mut self) {
@@ -6591,7 +6352,7 @@ impl Sandbox {
     // --- Shader profile editor ---
 
     /// Draws the world into the renderer's scene target at `size` pixels and
-    /// returns the draw-call count. Shared by the F1/F2/F3 path and the docked editor.
+    /// returns the draw-call count. Shared by the closed-dock and docked paths and the docked editor.
     pub(crate) fn render_scene(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> anyhow::Result<u32> {
         let params = self.render_params;
 
@@ -6834,7 +6595,7 @@ impl Sandbox {
             egui::Slider::new(&mut self.physics_params.linear_damping, 0.0..=2.0)
                 .text("Linear damping"),
         );
-        ui.small("Saved/loaded with the level (F2 panel), not the shader profile.");
+        ui.small("Saved/loaded with the level (Level tab), not the shader profile.");
 
         ui.separator();
         ui.heading("Camera");
@@ -6883,7 +6644,7 @@ impl Sandbox {
 
         ui.separator();
         ui.small(
-            "F1 toggle UI \u{b7} F2 level editor \u{b7} F3 play/stop \u{b7} Tab cycle profile \u{b7} F5 save \u{b7} F9/F10 checkpoint save/load \u{b7} Esc quit",
+            "F1/F2/F4 editor \u{b7} F3 play/stop \u{b7} F9/F10 checkpoint save/load \u{b7} Esc quit (editor closed) / pause (playing)",
         );
     }
 }
@@ -7006,7 +6767,9 @@ impl Game for Sandbox {
                     None
                 }
             };
-            // Start straight in the docked editor (F4) when asked, like physics-sandbox's DUST_EDITOR.
+            // The docked editor is the only editor: create it now, open it on F1/F2/F4 or
+            // straight away with DUST_EDITOR (like physics-sandbox).
+            self.docked_create(ctx);
             if std::env::var_os("DUST_EDITOR").is_some() {
                 self.docked_toggle(ctx);
             }
@@ -7020,34 +6783,13 @@ impl Game for Sandbox {
         if self.docked_event(ctx, event) {
             return;
         }
-        let docked = self.docked_active();
-        if !docked {
+        if !self.docked_active() {
             if let Some(ui) = self.ui.as_mut() {
                 ui.handle_event(event);
             }
         }
-        let ui_wants_pointer = self
-            .ui
-            .as_ref()
-            .map(|ui| ui.wants_pointer_input())
-            .unwrap_or(false);
-        let ui_wants_keyboard = self
-            .ui
-            .as_ref()
-            .map(|ui| ui.wants_keyboard_input())
-            .unwrap_or(false);
-
-        let editing = editor_available() && self.mode == EditorMode::Edit && !docked;
 
         match *event {
-            Event::MouseMotion { xrel, yrel, .. }
-                if editing && !ui_wants_pointer && ctx.input.is_button_down(MouseButton::Left) =>
-            {
-                self.camera.orbit(-xrel as f32 * 0.01, -yrel as f32 * 0.01);
-            }
-            Event::MouseWheel { y, .. } if editing && !ui_wants_pointer => {
-                self.camera.zoom(-y as f32 * 0.3);
-            }
             Event::KeyDown {
                 keycode: Some(Keycode::Escape),
                 repeat: false,
@@ -7057,20 +6799,6 @@ impl Game for Sandbox {
                 EditorMode::Play => self.resume(ctx),
                 EditorMode::Edit => ctx.should_quit = true,
             },
-            Event::KeyDown {
-                keycode: Some(Keycode::F1),
-                repeat: false,
-                ..
-            } if editing => {
-                self.ui_visible = !self.ui_visible;
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::F2),
-                repeat: false,
-                ..
-            } if editing => {
-                self.level_ui_visible = !self.level_ui_visible;
-            }
             Event::KeyDown {
                 keycode: Some(Keycode::F3),
                 repeat: false,
@@ -7092,62 +6820,6 @@ impl Game for Sandbox {
                 ..
             } => {
                 self.load_checkpoint(ctx);
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Tab),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                if let Some(cycler) = self.profiles.as_mut() {
-                    let profile = cycler.next().clone();
-                    let gl = ctx.gl();
-                    let drawable_size = ctx.drawable_size();
-                    if let Err(err) = self.apply_profile(gl, drawable_size, &profile) {
-                        log::error!("failed to apply profile '{}': {err}", profile.name);
-                    }
-                }
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::F5),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                self.save_current_profile();
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Z),
-                repeat: false,
-                keymod,
-                ..
-            } if editing
-                && !ui_wants_keyboard
-                && (keymod.contains(sdl2::keyboard::Mod::LCTRLMOD) || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD)) =>
-            {
-                let gl = ctx.gl();
-                if keymod.contains(sdl2::keyboard::Mod::LSHIFTMOD) || keymod.contains(sdl2::keyboard::Mod::RSHIFTMOD) {
-                    self.redo(gl);
-                } else {
-                    self.undo(gl);
-                }
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::D),
-                repeat: false,
-                keymod,
-                ..
-            } if editing
-                && !ui_wants_keyboard
-                && (keymod.contains(sdl2::keyboard::Mod::LCTRLMOD) || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD)) =>
-            {
-                let gl = ctx.gl();
-                self.duplicate_selected(gl);
-            }
-            Event::KeyDown {
-                keycode: Some(Keycode::Delete),
-                repeat: false,
-                ..
-            } if editing && !ui_wants_keyboard => {
-                self.delete_selected();
             }
             Event::KeyDown {
                 keycode: Some(Keycode::E),
@@ -7228,13 +6900,6 @@ impl Game for Sandbox {
             self.hud.tick(dt);
             self.screen_effects.tick(dt);
             self.smooth_networked_transforms(dt);
-        }
-
-        if self.mode == EditorMode::Edit && !self.docked_on {
-            let ui_wants_keyboard = self.ui.as_ref().map(|ui| ui.wants_keyboard_input()).unwrap_or(false);
-            if !ui_wants_keyboard {
-                self.update_editor_camera_input(ctx, dt);
-            }
         }
 
         if self.mode == EditorMode::Play && !self.paused {
@@ -7468,7 +7133,8 @@ impl Game for Sandbox {
         let drawable_size = ctx.drawable_size();
         let aspect = ctx.aspect_ratio();
         let (view, proj) = match self.mode {
-            EditorMode::Edit => (self.camera.view_matrix(), self.camera.projection_matrix(aspect)),
+            // Dock closed (F1/F2/F4 reopen it): the scene through the editor camera, no UI.
+            EditorMode::Edit => self.closed_dock_view(aspect),
             EditorMode::Play => {
                 let eye = self.player_eye_position();
                 (self.fp_camera.view_matrix(eye), self.fp_camera.projection_matrix(aspect))
@@ -7506,51 +7172,23 @@ impl Game for Sandbox {
         };
         let profiler_visible = self.profiler_visible;
 
-        // Must happen before `self.ui.take()` below — texture registration
-        // needs `&mut EguiState`, which `ui_state.run`'s closure can't
-        // provide (it's already exclusively borrowed for the closure's
-        // duration). See `AssetBrowserState`'s doc comment.
-        if self.texture_asset_browser.is_open() {
-            if let Some(ui_state) = self.ui.as_mut() {
-                self.texture_asset_browser.ensure_thumbnails_loaded(gl, ui_state);
-            }
-        }
-
-        // Editor overlay, drawn on top of the final (already-pixelated) image
-        // at full window resolution so the UI itself stays crisp.
+        // Overlay UI, drawn on top of the final (already-pixelated) image at
+        // full window resolution so the UI itself stays crisp.
         let mut ui_state = self.ui.take().expect("ui set up in init");
-        let editing = editor_available() && self.mode == EditorMode::Edit;
-        let ui_visible = self.ui_visible && editing;
-        let level_ui_visible = self.level_ui_visible && editing;
         let playing = self.mode == EditorMode::Play;
         // Inputs for the pause menu's multiplayer/appearance panels (shared with the docked editor).
         let pause_ui = self.pause_ui_inputs();
         let mut play_actions = PlayActions::default();
-        let mut picked_texture: Option<PathBuf> = None;
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if profiler_visible {
                 engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
             }
-            if editing {
-                if let Some(path) = self.texture_asset_browser.show(egui_ctx, &self.asset_root) {
-                    picked_texture = Some(path);
-                }
-            }
-            if level_ui_visible {
-                egui::SidePanel::left("level_editor")
-                    .default_width(280.0)
+            if editor_available() && !playing {
+                egui::Area::new("dock_closed_hint".into())
+                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
                     .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_level_editor_ui(ui, gl);
-                        });
-                    });
-            }
-            if ui_visible {
-                egui::SidePanel::right("editor")
-                    .default_width(300.0)
-                    .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_shader_editor_ui(ui, gl, drawable_size);
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.label("Editor closed \u{2014} F1 / F2 / F4 open it \u{b7} F3 play \u{b7} Esc quit");
                         });
                     });
             }
@@ -7579,10 +7217,6 @@ impl Game for Sandbox {
         });
         ui_state.paint(drawable_size, full_output);
         self.ui = Some(ui_state);
-
-        if let Some(path) = picked_texture {
-            self.apply_picked_texture(gl, path);
-        }
 
         match play_actions.pause {
             Some(PauseMenuAction::Resume) => self.resume(ctx),
