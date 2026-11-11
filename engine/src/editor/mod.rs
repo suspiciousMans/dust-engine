@@ -8,6 +8,9 @@
 pub mod command;
 pub mod hierarchy;
 pub mod inspector;
+pub mod level_compat;
+pub mod prefab;
+pub mod scene;
 pub mod selection;
 pub mod state;
 pub mod ui;
