@@ -7,6 +7,7 @@ pub mod camera;
 pub mod class;
 pub mod ecs;
 pub mod editor;
+pub mod effects;
 #[cfg(not(target_os = "emscripten"))]
 pub mod hotreload;
 pub mod hud;
