@@ -28,6 +28,7 @@ pub struct Input {
     controller_buttons_pressed: HashSet<Button>,
     left_stick: (f32, f32),
     right_stick: (f32, f32),
+    triggers: (f32, f32),
 }
 
 impl Input {
@@ -114,6 +115,8 @@ impl Input {
                     Axis::LeftY => self.left_stick.1 = normalized,
                     Axis::RightX => self.right_stick.0 = normalized,
                     Axis::RightY => self.right_stick.1 = normalized,
+                    Axis::TriggerLeft => self.triggers.0 = normalized.max(0.0),
+                    Axis::TriggerRight => self.triggers.1 = normalized.max(0.0),
                     _ => {}
                 }
             }
@@ -139,6 +142,7 @@ impl Input {
                 self.controller_buttons_pressed.clear();
                 self.left_stick = (0.0, 0.0);
                 self.right_stick = (0.0, 0.0);
+                self.triggers = (0.0, 0.0);
                 self.mouse_delta = (0, 0);
             }
             _ => {}
@@ -189,5 +193,28 @@ impl Input {
 
     pub fn controller_just_pressed(&self, button: Button) -> bool {
         self.controller_buttons_pressed.contains(&button)
+    }
+
+    /// Normalised (deadzoned) value of a controller axis; sticks keep SDL's convention (down = +).
+    pub fn pad_axis(&self, axis: Axis) -> f32 {
+        match axis {
+            Axis::LeftX => self.left_stick.0,
+            Axis::LeftY => self.left_stick.1,
+            Axis::RightX => self.right_stick.0,
+            Axis::RightY => self.right_stick.1,
+            Axis::TriggerLeft => self.triggers.0,
+            Axis::TriggerRight => self.triggers.1,
+        }
+    }
+
+    /// Keys that went down this frame (for rebinding capture, see `input_map`).
+    pub fn keys_just_pressed(&self) -> impl Iterator<Item = Keycode> + '_ {
+        self.keys_pressed.iter().copied()
+    }
+    pub fn buttons_just_pressed(&self) -> impl Iterator<Item = MouseButton> + '_ {
+        self.buttons_pressed.iter().copied()
+    }
+    pub fn controller_buttons_just_pressed(&self) -> impl Iterator<Item = Button> + '_ {
+        self.controller_buttons_pressed.iter().copied()
     }
 }
