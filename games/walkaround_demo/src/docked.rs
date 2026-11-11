@@ -329,6 +329,7 @@ impl Sandbox {
             d.rt.save_layout();
             self.docked_on = false;
             self.docked = Some(d);
+            log::info!("docked editor closed");
         } else {
             if self.mode != EditorMode::Edit {
                 return;
@@ -342,6 +343,7 @@ impl Sandbox {
             d.bridge = Bridge { seen_level_gen: level_gen, seen_level_name: level_name, ..Bridge::default() };
             d.io.borrow_mut().current_update = Some(level_file);
             self.docked_on = true;
+            log::info!("docked editor opened");
         }
         // Thumbnails are registered per egui context; the other mode's ids are stale.
         self.texture_asset_browser = engine::ui::AssetBrowserState::default();
@@ -1232,5 +1234,75 @@ mod tests {
             assert!(g.world.satisfies::<&Health>(e).unwrap());
             assert!(g.world.satisfies::<&CharacterBrain>(e).unwrap());
         }
+    }
+
+    fn io(levels_dir: &Path) -> (GameSceneIo, SharedIo) {
+        let shared: SharedIo = Rc::new(RefCell::new(IoShared { levels_dir: levels_dir.to_path_buf(), ..Default::default() }));
+        (GameSceneIo { shared: shared.clone(), current: None, dirty: false }, shared)
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("walkaround_docked_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn file_menu_queues_level_work_against_the_levels_folder() {
+        let dir = temp_dir("io");
+        let mut world = World::new();
+        let (mut scene_io, shared) = io(&dir);
+
+        scene_io.save(&world, Path::new("room.ron")).unwrap();
+        assert_eq!(scene_io.current_path(), Some(dir.join("room.ron").as_path()), "relative names land in levels/");
+        assert!(scene_io.save(&world, Path::new("")).is_err(), "no file stem, no save");
+
+        engine::level::save_to_file(&Level { name: "room".into(), ..Level::default() }, &dir.join("room.ron")).unwrap();
+        scene_io.open(Path::new("room.ron"), &mut world).unwrap();
+        assert!(scene_io.open(Path::new("missing.ron"), &mut world).is_err());
+        scene_io.new_scene(&mut world).unwrap();
+        assert!(scene_io.current_path().is_none());
+
+        let ops = std::mem::take(&mut shared.borrow_mut().ops);
+        assert!(matches!(ops.as_slice(), [IoOp::Save(_), IoOp::Open(l, _), IoOp::New] if l.name == "room"));
+
+        // The game switching levels behind the menu's back, and the shell's dirty report.
+        shared.borrow_mut().current_update = Some(Some(dir.join("other.ron")));
+        scene_io.sync_undo_dirty(true);
+        assert_eq!(scene_io.current_path(), Some(dir.join("other.ron").as_path()));
+        assert!(scene_io.is_dirty());
+        assert_eq!(scene_io.title(), "other.ron*");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_writes_the_level_named_after_the_file_and_caches_it() {
+        let dir = temp_dir("save");
+        let mut g = game();
+        let mut t = Transform::from_position(Vec3::new(1.0, 2.0, 3.0));
+        t.scale = Vec3::splat(2.0);
+        g.world.spawn((t, meta("Crate")));
+        let path = dir.join("my_room.ron");
+        g.io_save(&path).unwrap();
+        let saved = engine::level::load_from_file(&path).unwrap();
+        assert_eq!(saved.name, "my_room");
+        assert_eq!(saved.objects.len(), 1);
+        assert_eq!(saved.objects[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(g.current_level_name, "my_room");
+        assert!(g.levels.iter().any(|l| l.name == "my_room"));
+        // Saving again replaces the cache entry instead of adding a second one.
+        g.io_save(&path).unwrap();
+        assert_eq!(g.levels.iter().filter(|l| l.name == "my_room").count(), 1);
+        assert!(g.io_save(Path::new("")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn asset_drops_are_images_and_levels_only() {
+        assert_eq!(asset_kind(Path::new("a/b.PNG")), AssetKind::Image);
+        assert_eq!(asset_kind(Path::new("a/b.jpeg")), AssetKind::Image);
+        assert_eq!(asset_kind(Path::new("levels/x.ron")), AssetKind::Level);
+        assert_eq!(asset_kind(Path::new("music/x.wav")), AssetKind::Other);
+        assert_eq!(asset_kind(Path::new("noext")), AssetKind::Other);
     }
 }

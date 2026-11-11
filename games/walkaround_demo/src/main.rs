@@ -2319,8 +2319,7 @@ impl Sandbox {
 
     /// Reconstructs a `LevelObject` for a single entity — the same
     /// per-entity logic `build_level_from_ecs`'s main loop uses, factored
-    /// out so it's also reusable by "duplicate selected"
-    /// (`duplicate_selected`). Returns `None` if `entity` has no
+    /// out so other callers can reuse it. Returns `None` if `entity` has no
     /// `Transform`/`LevelObjectMeta` (e.g. it's a light or particle
     /// emitter, which have their own reconstruction below).
     fn level_object_from_entity(&self, entity: Entity) -> Option<LevelObject> {
