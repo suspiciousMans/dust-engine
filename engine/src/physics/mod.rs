@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 mod controller;
 mod debug;
+mod events;
 mod layers;
 mod narrow;
 mod query;
@@ -10,6 +11,7 @@ mod register;
 mod sim;
 
 pub use controller::{CharacterController, MoveResult};
+pub use events::{physics_step, physics_system, TriggerEvents};
 pub use debug::{DebugColor, DebugShape, PhysicsDebug, PhysicsDebugOptions};
 pub use layers::{CollisionLayers, LayerError, LayerMask, LayerNames, PhysicsMaterial};
 pub use narrow::{collide, shape_bounds, Contact, Pose};

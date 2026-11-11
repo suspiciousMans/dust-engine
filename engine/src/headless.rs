@@ -197,7 +197,10 @@ impl Headless {
     ///
     /// * `"physics"` — [`physics::step`] using the [`PhysicsParams`] resource
     ///   (inserted with defaults if absent; edit it to change gravity); the
-    ///   trigger overlaps land in the [`TriggerOverlaps`] resource. Stage
+    ///   trigger overlaps land in the [`TriggerOverlaps`] resource and the
+    ///   Enter/Stay/Exit transitions in the [`physics::TriggerEvents`]
+    ///   resource (see [`use_physics_world`](Self::use_physics_world) for the
+    ///   stateful solver with joints and sleeping). Stage
     ///   `PostUpdate`, so velocities set in `Update` take effect that frame.
     /// * `"effects"` — [`effects::tick`] (lifetimes, fades, timed texture
     ///   overrides, despawn of expired entities). Stage `Last`, after physics.
@@ -212,10 +215,10 @@ impl Headless {
     pub fn add_default_systems(&mut self) {
         self.resources.get_or_insert_with(PhysicsParams::default);
         self.resources.get_or_insert_with(TriggerOverlaps::default);
+        self.resources.get_or_insert_with(physics::TriggerEvents::default);
         self.schedule
             .add_system("physics", |ctx: &mut SystemCtx<'_>| {
-                let params = *ctx.res::<PhysicsParams>();
-                let overlaps = physics::step(ctx.world, ctx.dt, &params);
+                let overlaps = physics::physics_step(ctx.world, ctx.resources, ctx.dt);
                 ctx.res_mut::<TriggerOverlaps>().0 = overlaps;
             })
             .stage(Stage::PostUpdate);
@@ -225,6 +228,20 @@ impl Headless {
             })
             .stage(Stage::Last)
             .after("physics");
+    }
+
+    /// Opts the `"physics"` system into the stateful [`physics::PhysicsWorld`]
+    /// (fixed step = the harness [`dt`](Self::dt), 4 solver iterations,
+    /// sleeping, joints, native trigger events). The [`PhysicsParams`] resource
+    /// stays authoritative for gravity/damping. Call after
+    /// [`set_dt`](Self::set_dt)/[`with_dt`](Self::with_dt); returns the world
+    /// for further tuning (sleep config, iterations).
+    pub fn use_physics_world(&mut self) -> &mut physics::PhysicsWorld {
+        let params = *self.resources.get_or_insert_with(PhysicsParams::default);
+        let mut pw = physics::PhysicsWorld::new(params);
+        pw.fixed_dt = self.dt;
+        self.resources.insert(pw);
+        self.resources.require_mut::<physics::PhysicsWorld>()
     }
 
     /// Registers a named system (see [`Schedule::add_system`]).
