@@ -22,11 +22,11 @@ Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
 
 | Issue | Owner | Notes |
 |---|---|---|
-| Editor code is copy-pasted into `sandbox`, `mushroom_man`, `walkaround_demo` (~24k lines in three `main.rs`) | Stage 2.2 | only `physics-sandbox` uses `EditorRuntime` |
+| Docked editor (F4) is hosted in all four games, but the legacy F1/F2 editor is still in `sandbox`, `walkaround_demo`, `mushroom_man` (main.rs still ~7.7-8k lines each); two undo stacks; rig instances not editable by gizmo; HUD anchors to window not viewport; mouse picking and gizmo drag never hand-tested | Stage 2.2 / 3 | retire F2 to shrink main.rs |
 | File menu uses `LevelSceneIo` (primitives only), not the RON `Scene`/prefab path | Stage 3.8 | `editor/scene.rs`, `prefab.rs` are not wired to the shell |
 | Asset browser exists (`ui/asset_browser.rs`) but is not a shell tab | Stage 3.7 | |
 | UI designer exists (`ui_designer/`) but has no shell tab | Stage 4.2 | |
-| Click-through of select / gizmo / undo / Play / Stop has only been unit tested, not driven by hand | Stage 3 | |
+| Click-through of select / gizmo / undo / Play / Stop has only been unit tested and smoke-tested via F3/F4 scripts, not driven by hand | Stage 3 | |
 | Play/Stop restores only components registered in the inspector `Registry` | Stage 3 | register game components with `register_cloneable` |
 | Camera orbit input is not suppressed while a gizmo drag is active | Stage 3.4 | |
 | Scene `format_version` has no migrations yet | Stage 5 | hook exists in `scene::builtin_migrations` |
