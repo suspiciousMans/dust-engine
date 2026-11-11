@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 mod controller;
 mod debug;
 mod events;
+mod joints;
 mod layers;
 mod narrow;
 mod query;
@@ -13,6 +14,7 @@ mod sim;
 pub use controller::{CharacterController, MoveResult};
 pub use events::{physics_step, physics_system, TriggerEvents};
 pub use debug::{DebugColor, DebugShape, PhysicsDebug, PhysicsDebugOptions};
+pub use joints::{Joint, JointKind, DEFAULT_JOINT_ITERATIONS};
 pub use layers::{CollisionLayers, LayerError, LayerMask, LayerNames, PhysicsMaterial};
 pub use narrow::{collide, shape_bounds, Contact, Pose};
 pub use query::{Hit, PhysicsQueries, QueryFilter};
@@ -107,5 +109,5 @@ impl Collider {
 /// [`CollisionLayers`] and [`PhysicsMaterial`], which this honours. For events,
 /// fixed timestep, sleeping and multiple solver passes use [`PhysicsWorld`].
 pub fn step(world: &mut hecs::World, dt: f32, params: &PhysicsParams) -> Vec<(hecs::Entity, hecs::Entity)> {
-    sim::run_step(world, dt, params, 1, None).trigger_overlaps
+    sim::run_step(world, dt, params, 1, DEFAULT_JOINT_ITERATIONS, None).trigger_overlaps
 }
