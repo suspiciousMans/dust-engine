@@ -8,6 +8,7 @@ pub mod class;
 pub mod ecs;
 pub mod editor;
 pub mod effects;
+pub mod headless;
 #[cfg(not(target_os = "emscripten"))]
 pub mod hotreload;
 pub mod hud;
