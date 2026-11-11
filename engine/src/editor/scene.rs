@@ -28,7 +28,7 @@ use hecs::{BuiltEntityClone, Entity, World};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::hierarchy::{self, Children, Locked, Name, Parent, SpawnOrder, Visible};
+use super::hierarchy::{self, Locked, Name, SpawnOrder, Visible};
 use super::inspector::{FieldKind, Registry, Value};
 use super::prefab::{MemberRef, PrefabInstance, PrefabMember};
 

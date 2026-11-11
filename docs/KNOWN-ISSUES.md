@@ -1,0 +1,44 @@
+# Known issues
+
+Each item names the plan stage that owns it (see `docs/ROADMAP.md`).
+Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
+
+## Engine
+
+| Issue | Owner | Notes |
+|---|---|---|
+| No system scheduling or typed resources; games hand-order calls in `update` | Stage 1 / P3 | |
+| No tunables (RON + hot reload) or telemetry hook | Stage 1 / P5 | |
+| Audio has no buses and no backend trait | Stage 1 / P2 | |
+| No effect primitives (`Lifetime`, `Fade`, `TextureOverride`) | Stage 1 / P1 | |
+| Engine forked from Dreamscape (40 files differ at audit time) | Stage 1 / P0 | `docs/fork-audit.md`; confirm the reconcile actually landed |
+| Skeletal/skinned animation missing (segmented rigs only) | Stage 5 | |
+| Physics ray/sweep queries and joints: check coverage after the physics rewrite | Stage 5 | |
+| `new_game` scaffolding and packaging are PowerShell only | Stage 5 | `new_game.ps1`, `package.ps1` |
+| CI builds on Windows only; Linux and web are not gated | Stage 0 | |
+| `cargo clippy --workspace` reports ~100 style warnings (not gated) | Stage 0 | mostly `map_or`, complex types |
+
+## Editor
+
+| Issue | Owner | Notes |
+|---|---|---|
+| Editor code is copy-pasted into `sandbox`, `mushroom_man`, `walkaround_demo` (~24k lines in three `main.rs`) | Stage 2.2 | only `physics-sandbox` uses `EditorRuntime` |
+| File menu uses `LevelSceneIo` (primitives only), not the RON `Scene`/prefab path | Stage 3.8 | `editor/scene.rs`, `prefab.rs` are not wired to the shell |
+| Asset browser exists (`ui/asset_browser.rs`) but is not a shell tab | Stage 3.7 | |
+| UI designer exists (`ui_designer/`) but has no shell tab | Stage 4.2 | |
+| Click-through of select / gizmo / undo / Play / Stop has only been unit tested, not driven by hand | Stage 3 | |
+| Play/Stop restores only components registered in the inspector `Registry` | Stage 3 | register game components with `register_cloneable` |
+| Camera orbit input is not suppressed while a gizmo drag is active | Stage 3.4 | |
+| Scene `format_version` has no migrations yet | Stage 5 | hook exists in `scene::builtin_migrations` |
+
+## Games
+
+| Issue | Owner | Notes |
+|---|---|---|
+| `physics-sandbox` logs "Frame dt" every frame after the first second | Stage 0 | existing behaviour, noisy in editor mode |
+| `walkaround_demo` has unused-variable warnings in some builds | Stage 0 | recheck |
+
+## Naming
+
+The project is still called Jame in code, paths and docs. The rename to Dust
+is the last stage and waits on four owner decisions listed in the plan.

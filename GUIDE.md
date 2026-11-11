@@ -9,7 +9,7 @@ savable "shader profiles" you can tweak live in an in-game editor GUI.
 ## Workspace layout
 
 ```
-ps2-engine/
+jame-engine/
   Cargo.toml              workspace root (members = engine, games/*)
   .cargo/config.toml       env vars needed to build vendored SDL2 on this machine
   engine/                  the reusable library — everything below lives here
@@ -40,7 +40,7 @@ ps2-engine/
 ## Quick start
 
 ```
-cd ps2-engine
+cd jame-engine
 cargo run -p sandbox
 ```
 

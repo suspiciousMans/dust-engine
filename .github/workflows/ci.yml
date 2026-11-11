@@ -42,3 +42,7 @@ jobs:
       - name: Run engine test suite
         shell: pwsh
         run: cargo test -p engine --verbose
+
+      - name: Test workspace
+        shell: pwsh
+        run: cargo test --workspace

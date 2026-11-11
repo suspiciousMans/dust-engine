@@ -1,7 +1,7 @@
 use glam::Vec3;
 
 use crate::ecs::Transform;
-use crate::physics::{Collider, ColliderShape, RigidBody};
+use crate::physics::{Collider, RigidBody};
 
 /// Minimum Y half-extent (or radius) a collider needs to count as an
 /// obstruction when baking a `NavGrid` — keeps a paper-thin floor plane
@@ -217,6 +217,7 @@ impl PartialOrd for ScoredCell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::physics::ColliderShape;
 
     fn wall(world: &mut hecs::World, position: Vec3, half_extents: Vec3) {
         world.spawn((

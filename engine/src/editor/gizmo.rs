@@ -442,14 +442,14 @@ impl Gizmo {
                             (true, Some(s)) => run.push(s),
                             _ => {
                                 if run.len() > 1 {
-                                    painter.add(Shape::line(std::mem::take(&mut run), Stroke::new(2.0, col)));
+                                    painter.add(Shape::line(std::mem::take(&mut run), Stroke::new(2.0_f32, col)));
                                 }
                                 run.clear();
                             }
                         }
                     }
                     if run.len() > 1 {
-                        painter.add(Shape::line(run, Stroke::new(2.0, col)));
+                        painter.add(Shape::line(run, Stroke::new(2.0_f32, col)));
                     }
                 }
             }
@@ -459,7 +459,7 @@ impl Gizmo {
                         if let Some(q) = self.plane_quad(cam, origin, frame, size, n) {
                             let c = self.color(Handle::Plane(n), AXIS_COLORS[n]);
                             let fill = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 90);
-                            painter.add(Shape::convex_polygon(q.to_vec(), fill, Stroke::new(1.0, c)));
+                            painter.add(Shape::convex_polygon(q.to_vec(), fill, Stroke::new(1.0_f32, c)));
                         }
                     }
                     if !shown(Handle::Axis(n)) {
@@ -467,7 +467,7 @@ impl Gizmo {
                     }
                     let col = self.color(Handle::Axis(n), AXIS_COLORS[n]);
                     let Some(tip) = cam.project(origin + axis_dir(frame, n) * size) else { continue };
-                    painter.line_segment([o, tip], Stroke::new(2.5, col));
+                    painter.line_segment([o, tip], Stroke::new(2.5_f32, col));
                     if self.mode == GizmoMode::Scale {
                         painter.rect_filled(egui::Rect::from_center_size(tip, egui::vec2(9.0, 9.0)), 0.0, col);
                     } else {

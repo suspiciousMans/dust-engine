@@ -14,7 +14,7 @@ README is just the quick tour.
 ## Quick start
 
 ```
-cd ps2-engine
+cd jame-engine
 cargo run -p sandbox
 ```
 
@@ -56,9 +56,10 @@ panel, **Tab** cycles shader profiles, **F5** saves the current profile,
 ## Workspace layout
 
 ```
-ps2-engine/
+jame-engine/
   engine/            the reusable library — rendering, ECS, physics, scripting, etc.
   games/sandbox/      the demo game — also the template for starting a new one
+  games/physics-sandbox/  small particle/physics toy; reference host for the docked editor (F1)
   tools/script_editor/ standalone editor for .pss script files
   package.ps1         builds a game in release mode and assembles a dist/ folder
 ```

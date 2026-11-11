@@ -540,7 +540,7 @@ impl ViewportInteraction {
         if let (Some(p), Some(c)) = (&self.press, self.last_cursor) {
             if p.marquee {
                 let r = Rect::from_two_pos(p.pos, c);
-                painter.rect(r, 0.0, Color32::from_rgba_unmultiplied(120, 170, 255, 30), Stroke::new(1.0, Color32::from_rgb(140, 190, 255)));
+                painter.rect(r, 0.0, Color32::from_rgba_unmultiplied(120, 170, 255, 30), Stroke::new(1.0_f32, Color32::from_rgb(140, 190, 255)));
             }
         }
     }
