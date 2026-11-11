@@ -1352,6 +1352,62 @@ mod tests {
         assert!(report.needs_script.is_empty(), "only reported once");
     }
 
+    fn scene_io(dir: &Path) -> (GameSceneIo, Rc<RefCell<SceneBridge>>) {
+        let shared = Rc::new(RefCell::new(SceneBridge::default()));
+        (GameSceneIo { levels_dir: dir.to_path_buf(), shared: shared.clone(), path: None, undo_dirty: false }, shared)
+    }
+
+    fn temp_levels_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mushroom_sceneio_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn file_menu_names_resolve_into_the_levels_dir() {
+        let dir = temp_levels_dir("resolve");
+        let (io, _) = scene_io(&dir);
+        assert_eq!(io.resolve(Path::new("cave")), dir.join("cave.ron"));
+        assert_eq!(io.resolve(Path::new("sub/cave.ron")), dir.join("sub/cave.ron"));
+        assert_eq!(io.resolve(&dir.join("cave.ron")), dir.join("cave.ron"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_menu_open_save_new_queue_work_for_the_game() {
+        let dir = temp_levels_dir("ops");
+        let (mut io, shared) = scene_io(&dir);
+        let mut world = World::new();
+        // A level that does not parse is refused on the spot and queues nothing.
+        assert!(io.open(Path::new("missing"), &mut world).is_err());
+        assert!(shared.borrow().ops.is_empty());
+
+        let level = Level { name: "cave".into(), ..Default::default() };
+        engine::level::save_to_file(&level, &dir.join("cave.ron")).unwrap();
+        io.open(Path::new("cave"), &mut world).unwrap();
+        assert_eq!(io.current_path(), Some(dir.join("cave.ron").as_path()));
+        assert!(matches!(&shared.borrow().ops[..], [SceneOp::Open { level, .. }] if level.name == "cave"));
+
+        // Save As another name: the game is told, and the open file follows.
+        io.save(&world, Path::new("grotto")).unwrap();
+        assert!(matches!(shared.borrow().ops.last(), Some(SceneOp::Save(p)) if *p == dir.join("grotto.ron")));
+        assert_eq!(shared.borrow().current, Some(dir.join("grotto.ron")));
+        assert_eq!(shared.borrow().named.as_deref(), Some("grotto"));
+
+        // Dirty comes from the shell's undo stack; the game's file wins over a stale path.
+        assert!(!io.is_dirty());
+        shared.borrow_mut().current = Some(dir.join("other.ron"));
+        io.sync_undo_dirty(true);
+        assert!(io.is_dirty());
+        assert_eq!(io.current_path(), Some(dir.join("other.ron").as_path()));
+        assert_eq!(io.title(), "other.ron*");
+
+        io.new_scene(&mut world).unwrap();
+        assert!(io.current_path().is_none() && matches!(shared.borrow().ops.last(), Some(SceneOp::New)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn viewport_picking_finds_level_objects_but_not_rig_parts() {
         use engine::editor::cam_matrices::Ray;
