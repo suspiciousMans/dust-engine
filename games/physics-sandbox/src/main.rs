@@ -15,7 +15,7 @@ use engine::glam::{Mat4, Quat, Vec3};
 use engine::mesh::{primitives, GpuMesh};
 use engine::particles::{ParticleEmitter, ParticleEmitterDef, step};
 use engine::physics::{step as physics_step, Collider, ColliderShape, PhysicsParams, RigidBody};
-use engine::renderer::{Renderer, DEFAULT_FRAGMENT_SRC};
+use engine::renderer::{patch_mesh_shaders, Renderer, ShadowBounds, ShadowSettings, DEFAULT_FRAGMENT_SRC};
 use engine::sdl2::event::Event;
 use engine::sdl2::keyboard::Keycode;
 use engine::sdl2::mouse::MouseButton;
@@ -205,6 +205,9 @@ struct SandboxGame {
     elapsed: f64,
     gravity_preset: usize,
     editor: Option<EditorRuntime>,
+    /// `DUST_SHADOWS` (1 = smooth PCF, ps2 = low-res dithered): opt-in demo of
+    /// the engine's directional shadow map. `None` = original rendering.
+    shadows: Option<ShadowSettings>,
 }
 
 impl Game for SandboxGame {
@@ -221,7 +224,16 @@ impl Game for SandboxGame {
         // Shaders
         let vert = std::fs::read_to_string(asset_root.join("assets/shaders/mesh.vert"))?;
         let frag = std::fs::read_to_string(asset_root.join("assets/shaders/mesh.frag"))?;
-        self.program = Some(link_program(gl, &vert, &frag)?);
+        self.shadows = shadow_settings_from_env();
+        if let Some(settings) = self.shadows {
+            // Opt-in: the engine patches shadow receiving into the game's own
+            // mesh shaders in memory; the files on disk stay untouched.
+            let (vert, frag) = patch_mesh_shaders(&vert, &frag, "FragColor")?;
+            self.program = Some(link_program(gl, &vert, &frag)?);
+            self.renderer.as_mut().unwrap().set_shadow_settings(gl, settings);
+        } else {
+            self.program = Some(link_program(gl, &vert, &frag)?);
+        }
 
         // Meshes
         let cube_mesh = Arc::new(GpuMesh::upload(gl, &primitives::cube())?);
@@ -251,6 +263,25 @@ impl Game for SandboxGame {
                 is_trigger: false,
             },
         ));
+
+        if self.shadows.is_some() {
+            // Static demo cubes so the shadows have something to show.
+            for (i, (x, y, z, h)) in [(-3.0, 0.6, 4.0, 0.5), (0.0, 1.4, 2.0, 0.5), (3.5, 0.6, 3.0, 0.5), (-1.5, 2.6, 5.0, 0.5), (1.5, 0.6, 7.0, 0.5)]
+                .into_iter()
+                .enumerate()
+            {
+                self.world.spawn((
+                    Name(format!("Shadow demo cube {i}")),
+                    Transform {
+                        position: Vec3::new(x, y, z),
+                        rotation: Quat::from_rotation_y(i as f32 * 0.5),
+                        scale: Vec3::splat(h * 2.0),
+                    },
+                    MeshRenderer { mesh: Arc::clone(self.cube_mesh.as_ref().unwrap()), texture: None },
+                    CubeColor([0.9, 0.35 + 0.1 * i as f32, 0.2, 1.0]),
+                ));
+            }
+        }
 
         // Liquid emitter (main fountain)
         let liquid_emitter = self.world.spawn((
@@ -683,6 +714,19 @@ impl SandboxGame {
     fn draw_scene(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> Result<()> {
         let renderer = self.renderer.as_mut().unwrap();
         renderer.resize_if_needed(gl, size)?;
+        // Shadow pass (opt-in): depth of every coloured mesh from the sun,
+        // fitted to the camera frustum. Skipped entirely when shadows are off.
+        if renderer.shadows_active() {
+            let bounds = ShadowBounds::camera(view, proj, renderer.shadow_settings());
+            if renderer.begin_shadow_pass(gl, SHADOW_SUN, &bounds) {
+                for (_e, (transform, mesh_renderer, _c)) in
+                    self.world.query::<(&Transform, &MeshRenderer, &CubeColor)>().iter()
+                {
+                    renderer.shadow_draw(gl, &transform.matrix(), &mesh_renderer.mesh);
+                }
+                renderer.end_shadow_pass(gl);
+            }
+        }
         renderer.begin_scene(gl);
 
         unsafe {
@@ -704,7 +748,13 @@ impl SandboxGame {
 
             gl.uniform_matrix_4_f32_slice(view_loc.as_ref(), false, &view.to_cols_array());
             gl.uniform_matrix_4_f32_slice(proj_loc.as_ref(), false, &proj.to_cols_array());
-            gl.uniform_3_f32(light_loc.as_ref(), 0.5, -0.7, 0.5);
+            if self.shadows.is_some() {
+                // Same "toward the light" vector the shadow pass uses.
+                gl.uniform_3_f32(light_loc.as_ref(), SHADOW_SUN.x, SHADOW_SUN.y, SHADOW_SUN.z);
+                renderer.bind_shadows(gl, program);
+            } else {
+                gl.uniform_3_f32(light_loc.as_ref(), 0.5, -0.7, 0.5);
+            }
 
             for (_entity, (transform, mesh_renderer, color)) in
                 self.world.query::<(&Transform, &MeshRenderer, &CubeColor)>().iter()
@@ -716,6 +766,19 @@ impl SandboxGame {
                 );
                 gl.uniform_4_f32(color_loc.as_ref(), color.0[0], color.0[1], color.0[2], color.0[3]);
                 mesh_renderer.mesh.draw(gl);
+            }
+            if self.shadows.is_some() {
+                // The ground carries no CubeColor so the loop above skips it;
+                // in the shadow demo draw it as a receiver.
+                for (_e, (name, transform, mesh_renderer)) in
+                    self.world.query::<(&Name, &Transform, &MeshRenderer)>().iter()
+                {
+                    if name.0 == "Ground" {
+                        gl.uniform_matrix_4_f32_slice(model_loc.as_ref(), false, &transform.matrix().to_cols_array());
+                        gl.uniform_4_f32(color_loc.as_ref(), 0.45, 0.62, 0.4, 1.0);
+                        mesh_renderer.mesh.draw(gl);
+                    }
+                }
             }
         }
 
@@ -853,6 +916,7 @@ impl Default for SandboxGame {
             elapsed: 0.0,
             gravity_preset: 1,
             editor: None,
+            shadows: None,
         }
     }
 }
@@ -919,6 +983,18 @@ fn point_vs_aabb(point: Vec3, aabb_pos: Vec3, aabb_half: Vec3) -> Option<Vec3> {
     };
     let normal = axis * local.dot(axis).signum();
     Some(normal * (depth + 0.01))
+}
+
+/// Direction toward the sun in the shadow demo.
+const SHADOW_SUN: Vec3 = Vec3::new(0.45, 0.75, 0.35);
+
+/// `DUST_SHADOWS=1|smooth` -> PCF, `ps2` -> low-res dithered; unset/other -> off.
+fn shadow_settings_from_env() -> Option<ShadowSettings> {
+    match std::env::var("DUST_SHADOWS").ok()?.to_ascii_lowercase().as_str() {
+        "1" | "true" | "smooth" => Some(ShadowSettings::smooth()),
+        "ps2" => Some(ShadowSettings::ps2()),
+        _ => None,
+    }
 }
 
 fn main() -> Result<()> {
