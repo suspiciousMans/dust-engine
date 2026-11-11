@@ -925,7 +925,7 @@ impl Sandbox {
     /// is named after the file.
     fn save_level_file(&mut self, path: &Path) -> anyhow::Result<()> {
         let mut level = self.build_level_from_ecs();
-        let stem = path.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty());
+        let stem = path.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty() && !s.starts_with('.'));
         level.name = stem.ok_or_else(|| anyhow::anyhow!("{path:?} has no file name"))?.to_string();
         engine::level::save_to_file(&level, path)?;
         log::info!("saved level '{}' to {path:?}", level.name);
@@ -1198,5 +1198,93 @@ mod tests {
         assert_eq!(hit.entity, near);
         game.world.despawn(near).unwrap();
         assert_eq!(pick_nearest(&game.world, &ray).unwrap().entity, far);
+    }
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sandbox_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("levels")).unwrap();
+        dir
+    }
+
+    fn scene_io(root: &Path) -> (GameSceneIo, Rc<RefCell<SceneShared>>) {
+        let shared = Rc::new(RefCell::new(SceneShared::default()));
+        let io = GameSceneIo {
+            shared: shared.clone(),
+            asset_root: root.to_path_buf(),
+            levels_dir: root.join("levels"),
+            current: None,
+            undo_dirty: false,
+        };
+        (io, shared)
+    }
+
+    #[test]
+    fn file_menu_queues_level_operations_with_resolved_paths() {
+        let root = temp_dir("io");
+        let (mut io, shared) = scene_io(&root);
+        let mut world = World::new();
+        let level = Level { name: "arena".into(), ..Level::default() };
+        engine::level::save_to_file(&level, &root.join("levels/arena.ron")).unwrap();
+
+        // A bare name means levels/<name>.ron; the file is parsed up front.
+        io.open(Path::new("arena"), &mut world).unwrap();
+        assert_eq!(io.current_path(), Some(root.join("levels/arena.ron").as_path()));
+        assert_eq!(shared.borrow().queue, vec![SceneRequest::Open(root.join("levels/arena.ron"))]);
+        // Folder-relative paths are relative to the asset root.
+        io.open(Path::new("levels/arena.ron"), &mut world).unwrap();
+        assert_eq!(shared.borrow().queue[1], SceneRequest::Open(root.join("levels/arena.ron")));
+        // Missing / unparsable files are refused before anything is queued.
+        assert!(io.open(Path::new("nope"), &mut world).is_err());
+        std::fs::write(root.join("levels/bad.ron"), "not a level").unwrap();
+        assert!(io.open(Path::new("bad"), &mut world).is_err());
+        assert_eq!(shared.borrow().queue.len(), 2);
+
+        io.save(&world, Path::new("copy")).unwrap();
+        assert_eq!(shared.borrow().queue[2], SceneRequest::Save(root.join("levels/copy.ron")));
+        assert!(io.save(&world, Path::new("missing_dir/x.ron")).is_err(), "folder must exist");
+        io.new_scene(&mut world).unwrap();
+        assert_eq!(shared.borrow().queue[3], SceneRequest::New);
+        assert_eq!(io.current_path(), None);
+
+        // The game can re-point "current file" (level switch); dirty comes from the shell's undo stack.
+        shared.borrow_mut().set_current = Some(Some(root.join("levels/arena.ron")));
+        io.sync_undo_dirty(true);
+        assert_eq!(io.current_path(), Some(root.join("levels/arena.ron").as_path()));
+        assert!(io.is_dirty());
+        assert_eq!(io.title(), "arena.ron*");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn save_as_writes_the_world_as_a_named_level_file() {
+        let root = temp_dir("save");
+        let mut game = Sandbox::new();
+        game.world.spawn(level_object("Crate", Vec3::new(1.0, 2.0, 3.0)));
+        let path = root.join("levels/mine.ron");
+        game.save_level_file(&path).unwrap();
+        let saved = engine::level::load_from_file(&path).unwrap();
+        assert_eq!(saved.name, "mine");
+        assert!(saved.objects.iter().any(|o| o.name == "Crate" && o.position == [1.0, 2.0, 3.0]));
+        assert_eq!(game.current_level_name, "mine");
+        assert!(game.levels.iter().any(|l| l.name == "mine"), "cached so the Level tab lists it");
+        assert!(game.save_level_file(&root.join("levels/.ron")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn asset_kinds_and_viewport_anchoring() {
+        assert!(is_image(Path::new("a/b.PNG")) && is_image(Path::new("c.jpeg")) && !is_image(Path::new("c.ron")));
+        assert!(is_level_file(Path::new("levels/x.ron")) && !is_level_file(Path::new("x.png")));
+
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let viewport = egui::Rect::from_min_size(egui::pos2(300.0, 60.0), egui::vec2(600.0, 400.0));
+        let raw = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+        let mut inside = None;
+        let _ = ctx.run(raw, |ctx| {
+            with_screen_rect(ctx, viewport, || inside = Some(ctx.screen_rect()));
+            assert_eq!(ctx.screen_rect(), screen, "restored afterwards");
+        });
+        assert_eq!(inside, Some(viewport));
     }
 }
