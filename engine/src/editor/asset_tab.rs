@@ -444,7 +444,7 @@ mod tests {
         p.cwd = "textures".into();
         let ctx = egui::Context::default();
         frame(&ctx, vec![], |ui| p.draw(ui));
-        // Both images were requested (no GL here, so nothing is loaded).
+        // No GL in tests, so nothing is ever loaded; drawing must still work.
         assert!(p.browser.thumbnail(&root.join("textures/brick.png")).is_none());
         assert!(!is_dragging_asset(&ctx));
         // A non-image folder requests nothing and still draws.

@@ -24,8 +24,8 @@ Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
 |---|---|---|
 | Docked editor (F4) is hosted in all four games, but the legacy F1/F2 editor is still in `sandbox`, `walkaround_demo`, `mushroom_man` (main.rs still ~7.7-8k lines each); two undo stacks; rig instances not editable by gizmo; HUD anchors to window not viewport; mouse picking and gizmo drag never hand-tested | Stage 2.2 / 3 | retire F2 to shrink main.rs |
 | File menu uses `LevelSceneIo` (primitives only), not the RON `Scene`/prefab path | Stage 3.8 | `editor/scene.rs`, `prefab.rs` are not wired to the shell |
-| Asset browser exists (`ui/asset_browser.rs`) but is not a shell tab | Stage 3.7 | |
-| UI designer exists (`ui_designer/`) but has no shell tab | Stage 4.2 | |
+| Assets tab is wired (`editor/asset_tab.rs`, `asset_drop.rs`): folder browse, search, select, double click -> `ShellEvent::AssetOpened`, drag to viewport/hierarchy -> `ShellEvent::AssetDropped`. Games must set `EditorRuntime::set_asset_root` and handle the events; the hosted games do neither yet. Thumbnails are never freed; only png/jpg are thumbnailed; only hand-driven checks of the real drag are missing (headless tests only) | Stage 3.7 | no folder is configured by default -> empty state |
+| UI Designer tab is wired (`editor/designer_tab.rs`): designer panel, document picker over `EditorRuntime::set_ui_dir`, built-in examples, undo, live canvas preview. Games must set the directory; the preview is the designer's own canvas, not the game's UI layer; never hand-driven | Stage 4.2 | no directory by default -> examples only |
 | Click-through of select / gizmo / undo / Play / Stop has only been unit tested and smoke-tested via F3/F4 scripts, not driven by hand | Stage 3 | |
 | Play/Stop restores only components registered in the inspector `Registry` | Stage 3 | register game components with `register_cloneable` |
 | Camera orbit input is not suppressed while a gizmo drag is active | Stage 3.4 | |

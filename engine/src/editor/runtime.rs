@@ -226,3 +226,56 @@ impl EditorRuntime {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::EditorTab;
+
+    struct Claims(EditorTab);
+    impl ShellHost for Claims {
+        fn tab_ui(&mut self, tab: &EditorTab, _w: &mut World, ui: &mut egui::Ui) -> bool {
+            if *tab == self.0 {
+                ui.label("host content");
+                return true;
+            }
+            false
+        }
+    }
+
+    /// Runs `tab_ui` for `tab` inside a bare egui frame.
+    fn draw_tab(inner: &mut dyn ShellHost, assets: &mut AssetsPanel, designer: &mut DesignerTab, tab: EditorTab) -> bool {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1500.0, 900.0))),
+            ..Default::default()
+        };
+        let mut handled = false;
+        let mut world = World::new();
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut host = WithImage { image: None, inner, assets, designer };
+                handled = host.tab_ui(&tab, &mut world, ui);
+            });
+        });
+        handled
+    }
+
+    #[test]
+    fn builtin_tabs_fill_in_when_the_host_declines() {
+        let (mut a, mut d) = (AssetsPanel::default(), DesignerTab::default());
+        assert!(draw_tab(&mut NoHost, &mut a, &mut d, EditorTab::Assets));
+        assert!(draw_tab(&mut NoHost, &mut a, &mut d, EditorTab::UiDesigner));
+        // Other tabs stay the host's business.
+        assert!(!draw_tab(&mut NoHost, &mut a, &mut d, EditorTab::Host("Level".into())));
+    }
+
+    #[test]
+    fn host_content_wins_over_the_builtins() {
+        let (mut a, mut d) = (AssetsPanel::default(), DesignerTab::default());
+        let mut host = Claims(EditorTab::Assets);
+        assert!(draw_tab(&mut host, &mut a, &mut d, EditorTab::Assets));
+        // UiDesigner is not claimed, so the built-in one answers.
+        assert!(draw_tab(&mut host, &mut a, &mut d, EditorTab::UiDesigner));
+    }
+}
