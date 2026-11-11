@@ -34,6 +34,9 @@ pub mod state;
 pub mod ui;
 pub mod viewport_target;
 
+#[cfg(test)]
+mod scene_wiring_tests;
+
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};
 pub use command::{Command, Ctx, UndoStack};

@@ -268,7 +268,7 @@ impl EditorShell {
     }
 
     /// Pushes project/undo state into the scene backend and prefab UI.
-    fn sync(&mut self, editor: &mut EditorState) {
+    pub(crate) fn sync(&mut self, editor: &mut EditorState) {
         editor.prefab_ui.set_root(self.prefabs_dir());
         self.scene_io.set_prefab_library(editor.prefab_ui.library());
         self.scene_io.sync_undo_dirty(editor.undo.is_dirty());
