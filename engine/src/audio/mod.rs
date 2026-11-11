@@ -17,6 +17,8 @@
 
 mod backend;
 mod engine;
+pub mod mixer;
+pub mod spatial;
 #[cfg(not(target_os = "emscripten"))]
 mod native;
 mod tracks;
