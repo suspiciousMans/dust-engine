@@ -132,7 +132,7 @@ impl ShellHost for DockHost<'_> {
         acc.map(|b| (b.min, b.max))
     }
 
-    fn viewport_overlay(&mut self, ctx: &egui::Context, _viewport: egui::Rect) {
+    fn viewport_overlay(&mut self, ctx: &egui::Context, _viewport: egui::Rect, _world: &mut World) {
         let g = &mut *self.game;
         if let Some(path) = g.texture_asset_browser.show(ctx, &g.asset_root) {
             self.pending.picked_texture = Some(path);
