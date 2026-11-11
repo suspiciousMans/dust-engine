@@ -22,12 +22,15 @@ pub mod spatial;
 #[cfg(not(target_os = "emscripten"))]
 mod native;
 mod tracks;
+mod voices;
 #[cfg(target_os = "emscripten")]
 mod web;
 
 pub use backend::{AudioBackend, LoopBuffer, NullBackend, NullEvent};
 pub use engine::{AudioEngine, TrackHandle, LAYER_TRACK, MUSIC_TRACK};
 pub use mixer::{Bus, BusSettings, Mixer, MixerError, MixerSettings, MixerSettingsError, MASTER_BUS, MUSIC_BUS, SFX_BUS, UI_BUS};
+pub use voices::{SpatialHandle, DEFAULT_MAX_SPATIAL_VOICES};
+pub use spatial::{Cone, Emitter, Listener, Rolloff, SpatialParams};
 pub use tracks::{GainFader, LoopClock, Track, TrackBank, TrackId};
 
 #[cfg(not(target_os = "emscripten"))]

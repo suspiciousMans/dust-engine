@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use super::backend::{AudioBackend, LoopBuffer};
 use super::mixer::{Mixer, MixerError, MixerSettings, MixerSettingsError, MUSIC_BUS, SFX_BUS};
+use super::spatial::Listener;
 use super::tracks::{LoopClock, TrackBank, TrackId};
+use super::voices::Voices;
 
 /// Name of the track `play_music_*` uses.
 pub const MUSIC_TRACK: &str = "music";
@@ -23,10 +25,10 @@ enum TimeSource {
     Manual,
 }
 
-struct Pending {
-    id: TrackId,
-    buffer: LoopBuffer,
-    fade_in_secs: f32,
+pub(super) struct Pending {
+    pub(super) id: TrackId,
+    pub(super) buffer: LoopBuffer,
+    pub(super) fade_in_secs: f32,
 }
 
 fn sane_secs(s: f32) -> f32 {
@@ -38,18 +40,20 @@ fn sane_secs(s: f32) -> f32 {
 }
 
 pub struct AudioEngine<B: AudioBackend> {
-    backend: B,
-    bank: TrackBank,
-    clock: LoopClock,
+    pub(super) backend: B,
+    pub(super) bank: TrackBank,
+    pub(super) clock: LoopClock,
     time: TimeSource,
     /// Registered but not yet started in the backend; started when the
     /// `TrackHandle` returned by `add_track` is dropped, so a chained
     /// `.set_gain(0.5)` applies before any sound plays.
-    pending: Vec<Pending>,
-    mixer: Mixer,
+    pub(super) pending: Vec<Pending>,
+    pub(super) mixer: Mixer,
     /// Track name -> bus, applied whenever a track of that name is created
     /// (persisted in `MixerSettings::routes`).
-    routes: HashMap<String, String>,
+    pub(super) routes: HashMap<String, String>,
+    pub(super) listener: Listener,
+    pub(super) voices: Voices,
 }
 
 impl<B: AudioBackend> AudioEngine<B> {
@@ -72,6 +76,8 @@ impl<B: AudioBackend> AudioEngine<B> {
             pending: Vec::new(),
             mixer: Mixer::new(),
             routes: HashMap::new(),
+            listener: Listener::default(),
+            voices: Voices::default(),
         }
     }
 
@@ -102,6 +108,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         for id in self.bank.tick(dt) {
             self.push_volume_id(id);
         }
+        self.update_voices(dt);
     }
 
     /// Seconds on the shared loop clock.
@@ -179,6 +186,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         match self.bank.remove(name) {
             Some(t) => {
                 self.pending.retain(|p| p.id != t.id);
+                self.voices.forget(t.id);
                 self.backend.stop_track(t.id);
                 true
             }
@@ -188,6 +196,7 @@ impl<B: AudioBackend> AudioEngine<B> {
 
     pub fn stop_all_tracks(&mut self) {
         for t in self.bank.clear() {
+            self.voices.forget(t.id);
             self.backend.stop_track(t.id);
         }
         self.pending.clear();
@@ -201,24 +210,25 @@ impl<B: AudioBackend> AudioEngine<B> {
         true
     }
 
-    fn any_track_solo(&self) -> bool {
+    pub(super) fn any_track_solo(&self) -> bool {
         self.bank.iter().any(|t| t.solo)
     }
 
     /// Track gain x mixer chain (bus gains, mutes, solo).
-    fn effective_volume(&self, id: TrackId) -> Option<f32> {
+    pub(super) fn effective_volume(&self, id: TrackId) -> Option<f32> {
         let t = self.bank.by_id(id)?;
-        Some(t.level() * self.mixer.effective_gain(&t.bus, t.solo, self.any_track_solo()))
+        let spatial = self.voices.gain(id).unwrap_or(1.0);
+        Some(t.level() * self.mixer.effective_gain(&t.bus, t.solo, self.any_track_solo()) * spatial)
     }
 
-    fn push_all_volumes(&mut self) {
+    pub(super) fn push_all_volumes(&mut self) {
         let ids: Vec<TrackId> = self.bank.iter().map(|t| t.id).collect();
         for id in ids {
             self.push_volume_id(id);
         }
     }
 
-    fn push_volume_id(&mut self, id: TrackId) {
+    pub(super) fn push_volume_id(&mut self, id: TrackId) {
         if self.pending.iter().any(|p| p.id == id) {
             return; // not started yet; it starts at the then-current volume
         }
@@ -235,7 +245,7 @@ impl<B: AudioBackend> AudioEngine<B> {
     /// Registers a track (stopping any with the same name) and queues its
     /// backend start. Returns None for an empty buffer (the old track is
     /// still removed).
-    fn register(&mut self, name: &str, buffer: LoopBuffer, looped: bool, phase: f64, fade_in_secs: f32) -> Option<TrackId> {
+    pub(super) fn register(&mut self, name: &str, buffer: LoopBuffer, looped: bool, phase: f64, fade_in_secs: f32) -> Option<TrackId> {
         self.sync();
         if buffer.is_empty() {
             self.stop_track(name);
@@ -244,6 +254,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         let (id, replaced) = self.bank.insert(name, looped, buffer.duration_secs(), phase);
         if let Some(old) = replaced {
             self.pending.retain(|p| p.id != old.id);
+            self.voices.forget(old.id);
             self.backend.stop_track(old.id);
         }
         if let Some(bus) = self.routes.get(name).filter(|b| self.mixer.has_bus(b)).cloned() {
@@ -255,7 +266,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         Some(id)
     }
 
-    fn start_pending(&mut self, id: TrackId) {
+    pub(super) fn start_pending(&mut self, id: TrackId) {
         self.sync();
         let Some(i) = self.pending.iter().position(|p| p.id == id) else { return };
         let p = self.pending.remove(i);
@@ -263,7 +274,15 @@ impl<B: AudioBackend> AudioEngine<B> {
         let start = if track.looped { self.clock.position(track.len_secs, track.phase) } else { 0.0 };
         let looped = track.looped;
         let vol = self.effective_volume(id).unwrap_or(0.0);
-        self.backend.start_track(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs);
+        match self.voices.pan_and_pitch(id) {
+            Some(((l, r), pitch)) => {
+                self.backend.start_track_panned(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs, l, r);
+                if let Some(pitch) = pitch {
+                    self.backend.set_track_pitch(id, pitch);
+                }
+            }
+            None => self.backend.start_track(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs),
+        }
     }
 
     /// Registers, sets the initial gain, and starts right away (legacy path).
