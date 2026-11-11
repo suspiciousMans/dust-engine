@@ -15,6 +15,7 @@ pub mod interaction;
 pub mod modal;
 pub mod picking;
 pub mod prefs;
+pub mod runtime;
 pub mod scene_io;
 pub mod shell;
 pub mod snapping;

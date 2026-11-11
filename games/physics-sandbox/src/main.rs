@@ -5,6 +5,10 @@ use anyhow::Result;
 use engine::app::{App, Context, Game};
 use engine::camera::FirstPersonCamera;
 use engine::ecs::{Entity, MeshRenderer, Transform, World};
+use engine::editor::bounds::{Aabb, LocalBounds};
+use engine::editor::runtime::{EditorRuntime, NoHost};
+use engine::editor::shell::PerfSnapshot;
+use engine::editor::{Locked, Name, Registry};
 use engine::glow;
 use engine::glow::HasContext;
 use engine::glam::{Mat4, Quat, Vec3};
@@ -200,6 +204,7 @@ struct SandboxGame {
     spatial_hash: SpatialHash,
     elapsed: f64,
     gravity_preset: usize,
+    editor: Option<EditorRuntime>,
 }
 
 impl Game for SandboxGame {
@@ -228,6 +233,10 @@ impl Game for SandboxGame {
 
         // Ground — thin slab at y=0.0, top surface at y=0.1
         let _ground_entity = self.world.spawn((
+            Name("Ground".into()),
+            Locked(true),
+            // The plane mesh is unit-sized; without this the picker would use a unit cube.
+            LocalBounds(Aabb::from_center_half(Vec3::ZERO, Vec3::new(1.0, 0.01, 1.0))),
             Transform {
                 position: Vec3::new(0.0, 0.0, 0.0),
                 rotation: Quat::IDENTITY,
@@ -245,6 +254,7 @@ impl Game for SandboxGame {
 
         // Liquid emitter (main fountain)
         let liquid_emitter = self.world.spawn((
+            Name("Fountain".into()),
             Transform::from_position(Vec3::new(0.0, 0.6, 0.0)),
             ParticleEmitter::new(ParticleEmitterDef {
                 rate_per_sec: 150.0,
@@ -264,6 +274,7 @@ impl Game for SandboxGame {
 
         // Spray emitter (player-held)
         let spray_emitter = self.world.spawn((
+            Name("Spray".into()),
             Transform::from_position(Vec3::new(0.0, 3.0, 12.0)),
             ParticleEmitter::new(ParticleEmitterDef {
                 rate_per_sec: 0.0,
@@ -297,10 +308,41 @@ impl Game for SandboxGame {
         self.ox = OxSandbox::new();
         self.spatial_hash = SpatialHash::new(2.0);
 
+        // Editor (F1). Components the snapshot must restore on Stop.
+        let mut registry = Registry::with_defaults();
+        registry.register_cloneable::<RigidBody>();
+        registry.register_cloneable::<Collider>();
+        registry.register_cloneable::<CubeColor>();
+        registry.register_cloneable::<CubeMaterial>();
+        let mut rt = EditorRuntime::new(ctx.gl_arc(), registry, Some(asset_root.join(".editor")), Vec::new())?;
+        if std::env::var_os("DUST_EDITOR").is_some() {
+            rt.open = true;
+            self.mouse_locked = false;
+            let _ = ctx.platform.sdl.mouse().set_relative_mouse_mode(false);
+        }
+        self.editor = Some(rt);
+
         Ok(())
     }
 
     fn handle_event(&mut self, ctx: &mut Context, event: &Event) {
+        if let Some(rt) = self.editor.as_mut() {
+            rt.handle_event(event);
+            if matches!(event, Event::KeyDown { keycode: Some(Keycode::F1), repeat: false, .. }) {
+                rt.open = !rt.open;
+                self.mouse_locked = !rt.open;
+                let _ = ctx.platform.sdl.mouse().set_relative_mouse_mode(self.mouse_locked);
+                if !rt.open {
+                    rt.save_layout();
+                }
+                return;
+            }
+            // With the editor open the UI owns input until the mouse is captured for play.
+            let esc = matches!(event, Event::KeyDown { keycode: Some(Keycode::Escape), .. });
+            if rt.open && !self.mouse_locked && !esc {
+                return;
+            }
+        }
         match event {
             Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                 self.mouse_locked = !self.mouse_locked;
@@ -401,6 +443,11 @@ impl Game for SandboxGame {
             }
         }
 
+        let simulating = self.editor.as_ref().map_or(true, |e| e.is_simulating());
+        let typing = self.editor.as_ref().is_some_and(|e| e.wants_keyboard());
+        let keys_ok = simulating && !typing;
+        let editor_open = self.editor.as_ref().is_some_and(|e| e.open);
+
         // Movement (projected to XZ plane so looking up/down doesn't change height)
         let forward = self.camera.forward();
         let right = self.camera.right();
@@ -411,17 +458,22 @@ impl Game for SandboxGame {
         let mut right_dir = right;
         right_dir.y = 0.0;
         right_dir = right_dir.normalize_or_zero();
-        if ctx.input.is_key_down(Keycode::W) {
+        if keys_ok && ctx.input.is_key_down(Keycode::W) {
             self.player_position += move_dir * speed;
         }
-        if ctx.input.is_key_down(Keycode::S) {
+        if keys_ok && ctx.input.is_key_down(Keycode::S) {
             self.player_position -= move_dir * speed;
         }
-        if ctx.input.is_key_down(Keycode::A) {
+        if keys_ok && ctx.input.is_key_down(Keycode::A) {
             self.player_position -= right_dir * speed;
         }
-        if ctx.input.is_key_down(Keycode::D) {
+        if keys_ok && ctx.input.is_key_down(Keycode::D) {
             self.player_position += right_dir * speed;
+        }
+
+        // Edit and Pause freeze the simulation (and the tools that act on it).
+        if !simulating {
+            return Ok(());
         }
 
         // Physics
@@ -498,7 +550,7 @@ impl Game for SandboxGame {
         }
 
         // Mouse actions dispatch based on current tool
-        if ctx.input.button_just_pressed(MouseButton::Left) {
+        if (!editor_open || self.mouse_locked) && ctx.input.button_just_pressed(MouseButton::Left) {
             match self.current_tool {
                 Tool::Place => {
                     let forward = self.camera.forward();
@@ -508,6 +560,7 @@ impl Game for SandboxGame {
                     // Don't place if it would trap the player
                     if ground_pos.distance(self.player_position) > 1.0 {
                         self.world.spawn((
+                            Name("Cube".into()),
                             Transform::from_position(ground_pos),
                             MeshRenderer {
                                 mesh: Arc::clone(self.cube_mesh.as_ref().unwrap()),
@@ -532,7 +585,7 @@ impl Game for SandboxGame {
             }
         }
 
-        if ctx.input.button_just_pressed(MouseButton::Right) {
+        if (!editor_open || self.mouse_locked) && ctx.input.button_just_pressed(MouseButton::Right) {
             match self.current_tool {
                 Tool::Spray => {
                     if let Ok(mut emitter) = self.world.get::<&mut ParticleEmitter>(self.spray_emitter) {
@@ -593,6 +646,7 @@ impl Game for SandboxGame {
             }
 
             self.world.spawn((
+                Name("Spawned cube".into()),
                 Transform::from_position(Vec3::new(spawn.x, spawn.y, spawn.z)),
                 MeshRenderer {
                     mesh: Arc::clone(self.cube_mesh.as_ref().unwrap()),
@@ -612,16 +666,24 @@ impl Game for SandboxGame {
     }
 
     fn render(&mut self, ctx: &mut Context) -> Result<()> {
-        let eye = self.eye_position();
-        let gl = ctx.gl();
-        let drawable_size = ctx.drawable_size();
-        let renderer = self.renderer.as_mut().unwrap();
-        renderer.resize_if_needed(gl, drawable_size)?;
-        renderer.begin_scene(gl);
+        if self.editor.as_ref().is_some_and(|e| e.open) {
+            return self.render_editor(ctx);
+        }
+        let size = ctx.drawable_size();
+        let view = self.camera.view_matrix(self.eye_position());
+        let proj = self.camera.projection_matrix(ctx.aspect_ratio());
+        self.draw_scene(ctx.gl(), size, view, proj)?;
+        self.renderer.as_mut().unwrap().present(ctx.gl(), size, &Default::default());
+        Ok(())
+    }
+}
 
-        let aspect = ctx.aspect_ratio();
-        let view = self.camera.view_matrix(eye);
-        let proj = self.camera.projection_matrix(aspect);
+impl SandboxGame {
+    /// Draws the scene into the renderer's scene target at `size` pixels.
+    fn draw_scene(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> Result<()> {
+        let renderer = self.renderer.as_mut().unwrap();
+        renderer.resize_if_needed(gl, size)?;
+        renderer.begin_scene(gl);
 
         unsafe {
             gl.clear_color(0.08, 0.08, 0.08, 1.0);
@@ -669,8 +731,34 @@ impl Game for SandboxGame {
             }
         }
         renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
+        Ok(())
+    }
 
-        renderer.present(gl, drawable_size, &Default::default());
+    /// Scene into the editor's Viewport tab, then the docked editor on top.
+    fn render_editor(&mut self, ctx: &mut Context) -> Result<()> {
+        let gl = ctx.gl();
+        let drawable = ctx.drawable_size();
+        let Some(mut rt) = self.editor.take() else { return Ok(()) };
+        let size = rt.ensure_target(gl, drawable)?;
+        let aspect = size.0 as f32 / size.1.max(1) as f32;
+        let simulating = rt.is_simulating();
+        // Play shows the game camera, Edit/Pause the editor camera.
+        let (view, proj) = if simulating {
+            (self.camera.view_matrix(self.eye_position()), self.camera.projection_matrix(aspect))
+        } else {
+            rt.view_proj()
+        };
+        self.draw_scene(gl, size, view, proj)?;
+        let renderer = self.renderer.as_mut().unwrap();
+        if !simulating {
+            renderer.draw_grid(gl, proj * view, 80.0);
+        }
+        renderer.present_to(gl, rt.target.framebuffer(), size, &Default::default());
+
+        let dt = ctx.time.delta.max(1e-4);
+        let perf = PerfSnapshot { fps: 1.0 / dt, frame_ms: dt * 1000.0, entities: self.world.len() as usize, draw_calls: 0 };
+        rt.run_ui(gl, drawable, &mut self.world, &mut NoHost, perf);
+        self.editor = Some(rt);
         Ok(())
     }
 }
@@ -764,6 +852,7 @@ impl Default for SandboxGame {
             spatial_hash: SpatialHash::new(2.0),
             elapsed: 0.0,
             gravity_preset: 1,
+            editor: None,
         }
     }
 }
