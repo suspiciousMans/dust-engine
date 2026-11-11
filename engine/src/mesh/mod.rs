@@ -4,6 +4,7 @@ pub mod instancing;
 pub mod primitives;
 
 pub use gltf_loader::{load_gltf, GltfImage, GltfMeshEntry, GltfScene};
+pub(crate) use gltf_loader::to_rgba8 as gltf_loader_to_rgba8;
 pub use instancing::InstanceBuffer;
 pub use obj_loader::load_obj;
 
@@ -45,6 +46,30 @@ const ATTR_COLOR: u32 = 3;
 
 impl GpuMesh {
     pub fn upload(gl: &glow::Context, mesh: &MeshData) -> anyhow::Result<Self> {
+        Self::upload_with_usage(gl, mesh, glow::STATIC_DRAW)
+    }
+
+    /// Like [`GpuMesh::upload`] but allocates the vertex buffer as
+    /// `DYNAMIC_DRAW`, for meshes whose vertices are rewritten every frame
+    /// with [`GpuMesh::update_vertices`] (CPU skinning).
+    pub fn upload_dynamic(gl: &glow::Context, mesh: &MeshData) -> anyhow::Result<Self> {
+        Self::upload_with_usage(gl, mesh, glow::DYNAMIC_DRAW)
+    }
+
+    /// Overwrites the first `vertices.len()` vertices of the VBO in place.
+    /// `vertices` must not be longer than the mesh uploaded (GL rejects an
+    /// out-of-range sub-data write with `INVALID_VALUE`). `GpuMesh` is
+    /// deliberately not given a vertex-count field: `headless.rs` builds
+    /// fake meshes by transmuting a `[u32; 4]`, so its size must not change.
+    pub fn update_vertices(&self, gl: &glow::Context, vertices: &[Vertex]) {
+        unsafe {
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(vertices));
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        }
+    }
+
+    fn upload_with_usage(gl: &glow::Context, mesh: &MeshData, usage: u32) -> anyhow::Result<Self> {
         unsafe {
             let vao = gl.create_vertex_array().map_err(anyhow::Error::msg)?;
             gl.bind_vertex_array(Some(vao));
@@ -64,7 +89,7 @@ impl GpuMesh {
             gl.buffer_data_u8_slice(
                 glow::ARRAY_BUFFER,
                 bytemuck::cast_slice(&mesh.vertices),
-                glow::STATIC_DRAW,
+                usage,
             );
 
             let ebo = match gl.create_buffer().map_err(anyhow::Error::msg) {

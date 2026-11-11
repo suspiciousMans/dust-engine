@@ -12,7 +12,7 @@ Updated 2026-11-11 after wiring scene/prefab I/O into the shell.
 | Fade alpha is stored on `Fade` only; `MeshRenderer` has no tint/alpha so the renderer ignores it | Stage 1 / P1 | |
 | Games must call `audio.update()` each frame for track fades to advance | Stage 1 / P2 | web audio path type-checked only, never built |
 | `physics::sim::tests::five_hundred_body_benchmark` asserts <50 ms/step in debug and fails under heavy machine load | Stage 0 | flaky, not a logic bug |
-| Skeletal/skinned animation missing (segmented rigs only) | Stage 5 | |
+| Skeletal animation (`engine::skeletal`): CPU skinning + glTF import are unit-tested only; `SkinnedMesh` GL upload and drawing have never run on a real GL context, no game/editor draws it yet, no GPU-skinning path, no inspector registration, glTF imports the first skin only | Stage 5 | `engine/src/skeletal/` |
 | Physics ray/sweep queries and joints: check coverage after the physics rewrite | Stage 5 | |
 | `new_game` scaffolding and packaging are PowerShell only | Stage 5 | `new_game.ps1`, `package.ps1` |
 | CI builds on Windows only; Linux and web are not gated | Stage 0 | |

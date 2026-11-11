@@ -44,7 +44,8 @@ pub struct GltfScene {
 /// (see `engine::rig`) — and **animation-channel import** — `RigClip`'s
 /// `Keyframe` is rotation-only, glTF's TRS animation channels are richer.
 /// A skinned/animated source file still imports fine, just at its bind
-/// pose with no animation data carried over.
+/// pose with no animation data carried over. For skins and animations use
+/// `skeletal::import::load_gltf_skinned` instead.
 pub fn load_gltf(path: &Path) -> anyhow::Result<GltfScene> {
     let (document, buffers, images) = gltf::import(path)?;
     let mut meshes = Vec::new();
@@ -141,7 +142,7 @@ pub fn load_gltf(path: &Path) -> anyhow::Result<GltfScene> {
 /// 16-bit/float formats glTF allows but which a typical color texture
 /// never actually uses — rather than guess at a lossy downcast, the
 /// caller just skips the texture (logged) and the mesh imports untextured.
-fn to_rgba8(pixels: &[u8], format: gltf::image::Format) -> Option<Vec<u8>> {
+pub(crate) fn to_rgba8(pixels: &[u8], format: gltf::image::Format) -> Option<Vec<u8>> {
     use gltf::image::Format;
     match format {
         Format::R8G8B8A8 => Some(pixels.to_vec()),
