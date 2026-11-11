@@ -44,6 +44,10 @@ pub trait ShellHost {
     fn selection_bounds(&mut self, world: &World, selection: &[Entity]) -> Option<(Vec3, Vec3)> {
         transform_bounds(world, selection)
     }
+    /// Game UI that must be drawn every frame whichever tabs are open (HUD,
+    /// floating windows). Called once per frame after the dock; the shell's
+    /// `world` is handed through like in [`ShellHost::tab_ui`].
+    fn overlay_ui(&mut self, _ctx: &egui::Context, _world: &mut World) {}
 }
 
 /// Fallback bounds: each entity is a unit box scaled by its `Transform`.

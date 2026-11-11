@@ -44,6 +44,9 @@ impl ShellHost for WithImage<'_> {
     fn selection_bounds(&mut self, world: &World, selection: &[hecs::Entity]) -> Option<(glam::Vec3, glam::Vec3)> {
         self.inner.selection_bounds(world, selection)
     }
+    fn overlay_ui(&mut self, ctx: &egui::Context, world: &mut World) {
+        self.inner.overlay_ui(ctx, world)
+    }
 }
 
 pub struct EditorRuntime {
@@ -138,6 +141,7 @@ impl EditorRuntime {
         let output = egui.run(drawable, |ctx| {
             let mut host = WithImage { image, inner: host };
             scale = shell.ui(ctx, state, world, &mut host);
+            host.overlay_ui(ctx, world);
             if let Some(rect) = shell.viewport.rect {
                 let aspect = rect.width() / rect.height().max(1.0);
                 let cam = CameraMatrices::new(shell.camera.view_matrix(), shell.camera.projection_matrix(aspect), rect);
