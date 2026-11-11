@@ -1,3 +1,5 @@
+> **Historical note.** Written for the early egui dock skeleton (`engine/src/ui/dock_skeleton.rs`). The editor has since been rebuilt as `engine/src/editor/` (`EditorRuntime`); see GUIDE.md "The docked editor" and docs/KNOWN-ISSUES.md for current state. The paths below are from a machine that no longer applies.
+
 # jame-engine UI redesign — Tasks 3–6 Implementation Notes
 
 **Status:** Tasks 0–2 ✅ complete and committed. This document guides Tasks 3–6.

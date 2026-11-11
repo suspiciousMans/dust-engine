@@ -14,8 +14,8 @@ Updated 2026-11-11 after wiring scene/prefab I/O into the shell and retiring the
 | `physics::sim::tests::five_hundred_body_benchmark` asserts <50 ms/step in debug and fails under heavy machine load | Stage 0 | flaky, not a logic bug |
 | Skeletal animation (`engine::skeletal`): CPU skinning + glTF import are unit-tested only; `SkinnedMesh` GL upload and drawing have never run on a real GL context, no game/editor draws it yet, no GPU-skinning path, no inspector registration, glTF imports the first skin only | Stage 5 | `engine/src/skeletal/` |
 | Physics ray/sweep queries and joints: check coverage after the physics rewrite | Stage 5 | |
-| `new_game` scaffolding and packaging are PowerShell only | Stage 5 | `new_game.ps1`, `package.ps1` |
-| CI builds on Windows only; Linux and web are not gated | Stage 0 | |
+| `new_game.sh` / `package.sh` (bash) exist alongside the PowerShell scripts; `new_game.sh` was checked by scaffolding a copy and `cargo check`ing it, `package.sh` only by `bash -n` and a dry run. No web (emscripten) packaging: no build recipe is documented in the repo | Stage 5 | `new_game.sh`, `package.sh` |
+| CI has Windows and Linux jobs (`.github/workflows/ci.yml`; the Linux job was validated as YAML only, never run on GitHub); web is not gated | Stage 0 | |
 | `cargo clippy --workspace` reports ~100 style warnings (not gated) | Stage 0 | mostly `map_or`, complex types |
 
 ## Editor
@@ -31,7 +31,7 @@ Updated 2026-11-11 after wiring scene/prefab I/O into the shell and retiring the
 | Click-through of select / gizmo / undo / Play / Stop has only been unit tested and smoke-tested via F3/F4 scripts, not driven by hand | Stage 3 | |
 | Play/Stop restores only components registered in the inspector `Registry` | Stage 3 | register game components with `register_cloneable` |
 | Camera orbit input is not suppressed while a gizmo drag is active | Stage 3.4 | |
-| Scene `format_version` has no migrations yet | Stage 5 | hook exists in `scene::builtin_migrations` |
+| Scene `format_version` has no migrations yet (still version 1) | Stage 5 | hook exists in `scene::builtin_migrations`; worked v1 -> v2 example and error cases in `editor/scene_migration_tests.rs`, documented in GUIDE.md |
 
 ## Games
 

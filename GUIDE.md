@@ -10,24 +10,36 @@ savable "shader profiles" you can tweak live in an in-game editor GUI.
 
 ```
 jame-engine/
-  Cargo.toml              workspace root (members = engine, games/*)
-  .cargo/config.toml       env vars needed to build vendored SDL2 on this machine
+  Cargo.toml              workspace root (members = engine, games/sandbox, games/mushroom_man,
+                          games/walkaround_demo, games/physics-sandbox, tools/oxc_scripts)
+  .cargo/config.toml       env vars needed to build vendored SDL2 with a recent CMake/GCC
+  new_game.ps1 / .sh       scaffold a new game from the sandbox template
+  package.ps1 / .sh        release build + dist/<game>/ folder
+  docs/                    ROADMAP.md (status), KNOWN-ISSUES.md, examples/input_map.ron, ...
   engine/                  the reusable library — everything below lives here
     src/
       app/                 Game trait + App::run main loop
       platform/            SDL2 window + GL context setup
-      input.rs             keyboard/mouse state
-      time.rs              delta-time clock
-      camera.rs            OrbitCamera
+      input.rs, time.rs    keyboard/mouse/gamepad state, delta-time clock
+      input_map.rs         named actions bound to devices in RON, rebinding, contexts
+      camera.rs            OrbitCamera, FirstPersonCamera and camera FX
       ecs/                 hecs::World + Transform/MeshRenderer/Camera/Light/LevelObjectMeta/PlayerController components
-      mesh/                OBJ loading (tobj), GPU mesh upload, primitives (cube/plane)
-      texture.rs            image loading + GPU texture upload
-      shader/               GLSL compile/link + shader-variant caching
-      renderer/             low-res offscreen FBO + composite dither/posterize pass
-      profile.rs            ShaderProfile/RenderParams + RON save/load/cycle
-      level.rs               Level/LevelObject + RON save/load (the level editor's data model)
-      physics.rs             hand-rolled RigidBody/Collider simulation (gravity + AABB/Sphere collision)
-      ui/                   egui-based editor GUI (SDL2⇄egui bridge + panels)
+      resources.rs         typed singleton map (Resources)
+      schedule.rs          named systems with stages, before/after and run conditions (Schedule)
+      effects.rs           Lifetime / Fade / TextureOverride components + tick
+      mesh/, texture.rs    OBJ/glTF loading, GPU upload, primitives
+      shader/, renderer/   GLSL compile/cache, low-res offscreen FBO + composite dither/posterize pass
+      profile.rs           ShaderProfile/RenderParams + RON save/load/cycle
+      level.rs             Level/LevelObject + RON save/load (the legacy F2 editor's data model)
+      physics/             hand-rolled RigidBody/Collider simulation
+      audio/               AudioEngine: SFX, music, named loop tracks (rodio natively, SDL2 mixer on web)
+      tunables.rs          named constants in RON, live reload (Tunables)
+      telemetry.rs         CSV event log hook (Telemetry)
+      headless.rs          window-less test harness (Headless, EditorHeadless)
+      skeletal/            skinned animation: skeleton, clips, state machine, CPU skinning, glTF import
+      rig.rs, animation.rs older rigid-part rigs and orbit/bob motion (unchanged)
+      editor/              docked editor core: shell, hierarchy, inspector, gizmos, scenes, prefabs, runtime
+      ui/, ui_designer/    egui bridge, profiler/HUD widgets; UI document designer
   games/
     sandbox/                the demo game — also your template for new games
       src/main.rs
@@ -35,6 +47,11 @@ jame-engine/
       assets/models/, assets/textures/
       profiles/              *.ron shader profiles (auto-generated on first run)
       levels/                *.ron levels (auto-generated on first run)
+    mushroom_man/, walkaround_demo/   larger demos built from the same template
+    physics-sandbox/         small particle/physics toy; the reference host for EditorRuntime
+  tools/
+    oxc_scripts/             workspace member
+    script_editor/           standalone .pss editor (not a workspace member at this commit)
 ```
 
 ## Quick start
@@ -55,6 +72,17 @@ you're looking), **Space**/**Shift** raise/lower it, scroll wheel zooms,
 **F1** toggles the shader-profile panel, **F2** toggles the level editor
 panel, **Tab** cycles shader profiles, **F5** saves the current profile,
 **F3** enters Play mode (see "Running the game" below), **Escape** quits.
+**F4** opens the docked editor instead (viewport, hierarchy, inspector,
+gizmos, scenes and prefabs — see "The docked editor" below). Release builds
+have no editor at all and boot straight into Play.
+
+> **Key note.** F1/F2/Tab/F5/F3 are the *legacy* panels (the sandbox's own
+> egui code in `main.rs`); F4 is the engine's `EditorRuntime`. The dock key is
+> chosen by each game's `handle_event`, not by the engine: at this commit it
+> is F4 in `sandbox`, `mushroom_man` and `walkaround_demo`, and F1 in
+> `physics-sandbox` (which has no legacy panels). A change that reworks which
+> of F1/F2/F4 open the dock in the games is in flight; check the game's
+> `handle_event` if a key here does not match.
 
 ## The `Game` trait and the main loop
 
@@ -179,6 +207,11 @@ GUI list clicks. `load_dir`/`load_from_file`/`save_to_file` handle the RON I/O.
 
 ## The editor GUI
 
+> This section describes the **legacy** F1/F2 panels that live in each game's
+> `main.rs`. The engine also ships a full docked editor (`EditorRuntime`,
+> described in "The docked editor" below); the legacy panels are not the only
+> editor, and new games should host the docked one.
+
 `engine::ui::EguiState` bridges SDL2 input to `egui` and paints it via
 `egui_glow` — any game gets this by owning one `EguiState`, forwarding every
 SDL event to `handle_event`, and wrapping its panel code in `.run(...)` /
@@ -234,8 +267,8 @@ The **F2 panel** (`Sandbox::draw_level_editor_ui`/`draw_selected_object_ui` in
   edits don't drift the value the way a naive Euler↔quaternion round-trip
   would.
 
-There's no 3D transform gizmo or click-to-select-in-viewport — this is
-deliberately a *simple* editor. Vertex/face-level mesh editing is also out of
+The F2 panel has no 3D transform gizmo or click-to-select-in-viewport — it
+is deliberately a *simple* editor (the docked editor, F4, has both). Vertex/face-level mesh editing is also out of
 scope; "editing geometry" here means placing/transforming whole objects built
 from primitives or imported meshes.
 
@@ -426,6 +459,7 @@ feature, which already decodes WAV/OGG/MP3/FLAC — no extra dependency
 needed) behind a small, purpose-specific API:
 
 ```rust
+// AudioContext = AudioEngine<PlatformBackend>: rodio natively, the SDL2 mixer on emscripten
 pub fn new() -> anyhow::Result<Self>;                       // fails if no output device
 pub fn play_sfx_file(&self, path: &Path) -> anyhow::Result<()>;   // one-shot, fire-and-forget
 pub fn play_tone(&self, frequency_hz: f32, duration_secs: f32);   // procedural sine blip, no file
@@ -471,6 +505,50 @@ with no click — every frequency completes a whole number of cycles within
 the loop duration). Generated once into `sfx/demo_blip.wav`/
 `music/demo_ambient.wav` if missing, same bootstrap-if-empty convention as
 profiles/rigs/classes/levels.
+
+### Named tracks (buses)
+
+Besides the single `play_music_file` slot, an `AudioContext` holds any number
+of named **looping tracks** with their own gain, fades and mute. They share
+one loop clock, so equal-length loops added with the same offset stay in time
+(adaptive music: add the layers silent, fade them in when the game state
+changes). The same API runs natively and on the web backend.
+
+```rust
+use std::path::Path;
+
+use engine::audio::AudioContext;
+
+fn start_music(drums: Vec<f32>, pad: Vec<f32>) -> anyhow::Result<AudioContext> {
+    let mut audio = AudioContext::new()?; // Err if there is no output device
+    // Tracks join one shared loop clock, so equal-length loops stay in time.
+    audio.add_track("pad", (pad, 44_100)).set_gain(0.6);
+    audio.add_track("drums", (drums, 44_100)).set_gain(0.0);
+    audio.add_track_file("bass", Path::new("music/bass.ogg"))?.set_gain(0.5);
+    Ok(audio)
+}
+
+fn each_frame(audio: &mut AudioContext, enemy_near: bool) {
+    audio.update(); // advances the clock and any fades
+    if enemy_near {
+        audio.fade_track("drums", 1.0, 2.0); // to gain 1.0 over 2 s
+    } else {
+        audio.fade_track("drums", 0.0, 4.0);
+    }
+    audio.set_track_muted("bass", false);
+}
+```
+
+`add_track` returns a `TrackHandle` whose `set_gain` / `fade_to` / `set_muted`
+chain; the track starts when the handle is dropped, so the gain you chain
+applies before any sound plays. `set_track_gain`, `fade_track`,
+`set_track_muted`, `stop_track`, `has_track`, `track_names` and
+`track_position` work by name. **Call `audio.update()` once per frame** or
+fades never advance. `play_music_*` use the track named `engine::audio::MUSIC_TRACK`
+(`"music"`) and `play_music_layer_samples` uses `LAYER_TRACK` (`"layer"`).
+For tests, `AudioEngine::with_manual_time(NullBackend::new())` plus
+`advance(dt)` runs the same logic with no device. The web backend has only
+been type-checked, never built.
 
 ## Trigger volumes
 
@@ -1696,9 +1774,620 @@ carry the identical implementation. To try it: run two copies of the same
 game, **Esc** to pause in one, click **Host Game**, then in the other type
 `127.0.0.1:7777` (or the host's LAN IP) and click **Join**.
 
+## Systems: `Schedule` and `Resources`
+
+> **Status.** Implemented and unit-tested in the engine; no game in this
+> workspace runs its frame through a `Schedule` yet. The games still hand-order
+> work in `Game::update`.
+
+`engine::resources::Resources` is a typed singleton map — at most one value per
+Rust type, keyed by `TypeId`. `get`/`get_mut`/`remove` return `Option`;
+`require`/`require_mut` panic with a message naming the missing type.
+`engine::schedule::Schedule` is a registry of named systems. A system is a
+`fn` or closure taking a `SystemCtx { world, resources, dt }`; the schedule
+decides when each runs:
+
+- **`Stage`** gives hard ordering: `First < PreUpdate < Update < PostUpdate < Last`
+  (default `Update`).
+- **`before(name)` / `after(name)`** give fine ordering by name. A constraint
+  that contradicts stage order is a cycle.
+- Ties run in stage order, then registration order — fully deterministic.
+- **`run_if(|world, res| ..)`** / **`run_if_resource::<T>(|t| ..)`** skip a
+  system without removing it from the ordering; `set_enabled(name, bool)`
+  toggles one at runtime.
+
+The schedule does not own the world and does not touch the `Game` trait: a
+game keeps its `World` and `Resources` and calls `schedule.run(..)` from its
+own `update`, moving one feature at a time.
+
+```rust
+use engine::ecs::{Transform, World};
+use engine::glam::Quat;
+use engine::resources::Resources;
+use engine::schedule::{Schedule, Stage, SystemCtx};
+
+struct Score(u32);
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Edit,
+    Play,
+}
+
+// A system is a plain fn or closure over a SystemCtx { world, resources, dt }.
+fn spin(ctx: &mut SystemCtx) {
+    let dt = ctx.dt;
+    for (_, t) in ctx.world.query_mut::<&mut Transform>() {
+        t.rotation = Quat::from_rotation_y(dt) * t.rotation;
+    }
+}
+
+fn build_schedule() -> Schedule {
+    let mut schedule = Schedule::new();
+    schedule
+        .add_system("spin", spin)
+        .stage(Stage::Update) // the default; First < PreUpdate < Update < PostUpdate < Last
+        .run_if_resource::<Mode>(|m| *m == Mode::Play);
+    schedule.add_system("score", |ctx| ctx.res_mut::<Score>().0 += 1).after("spin");
+    schedule
+}
+
+fn setup() -> Resources {
+    let mut res = Resources::new();
+    res.insert(Score(0));
+    res.insert(Mode::Play);
+    *res.get_or_insert_with(|| 0u32) += 1; // one value per Rust type
+    res
+}
+
+// Call from Game::update. Ordering mistakes (cycles, unknown names, duplicate
+// names) come back as ScheduleError, never a panic.
+fn tick(schedule: &mut Schedule, world: &mut World, res: &mut Resources, dt: f32) -> anyhow::Result<()> {
+    let ran = schedule.run(world, res, dt)?;
+    log::trace!("{ran} systems ran");
+    Ok(())
+}
+```
+
+Cycles, unknown names in `before`/`after`, and duplicate names are reported as
+`ScheduleError` from `Schedule::build()` / `run()`; `try_add_system` returns the
+duplicate error instead of panicking like `add_system`.
+
+## Effects: `Lifetime`, `Fade`, `TextureOverride`
+
+> **Status.** Implemented and unit-tested. Games still use their own
+> spawn/age/despawn bookkeeping; none has been ported (see
+> [docs/ROADMAP.md](docs/ROADMAP.md)).
+
+`engine::effects` moves "spawn something short-lived, shrink it, despawn it"
+and "swap a texture, remember the old one" into ECS components:
+
+- `Lifetime { age, max }` — the entity is despawned by `effects::tick` when
+  `age >= max`.
+- `Fade` — scale and/or alpha animated over the entity's `Lifetime`
+  (`Fade::shrink()`, `Fade::fade_out()`, `with_scale`, `with_alpha`,
+  `with_curve(FadeCurve::{Linear, EaseOut})`). Scale is written into the
+  `Transform`; alpha is stored on the `Fade` (`fade.alpha()`) for your
+  renderer to read — **`MeshRenderer` has no alpha channel yet**, so the
+  engine renderer ignores it. A `Fade` without a `Lifetime` does nothing.
+- `TextureOverride { original, remaining }` — created by
+  `apply_texture_override(world, entity, texture, duration)`; the first original
+  is kept if you apply twice, and `restore_texture` puts it back. Despawning the
+  entity drops the saved texture with it.
+
+```rust
+use std::sync::Arc;
+
+use engine::ecs::{Entity, MeshRenderer, Transform, World};
+use engine::effects::{self, Fade, FadeCurve, Lifetime};
+use engine::glam::Vec3;
+use engine::mesh::GpuMesh;
+use engine::texture::GpuTexture;
+
+// A dash ghost: shrinks over 0.4 s, then despawns itself.
+fn spawn_ghost(world: &mut World, mesh: Arc<GpuMesh>, tex: Arc<GpuTexture>, at: Vec3) -> Entity {
+    world.spawn((
+        Transform::from_position(at),
+        MeshRenderer { mesh, texture: Some(tex) },
+        Lifetime::new(0.4),
+        Fade::shrink().with_curve(FadeCurve::EaseOut),
+    ))
+}
+
+// Swap an enemy's texture for 3 s; the original is remembered and put back.
+fn freeze(world: &mut World, enemy: Entity, frozen: Arc<GpuTexture>) {
+    effects::apply_texture_override(world, enemy, Some(frozen), Some(3.0));
+}
+
+fn thaw_now(world: &mut World, enemy: Entity) {
+    effects::restore_texture(world, enemy);
+}
+
+// Once per frame: advance lifetimes, apply fades, tick overrides, despawn the expired.
+fn update_effects(world: &mut World, dt: f32) {
+    let despawned: Vec<Entity> = effects::tick(world, dt);
+    let _ = despawned;
+}
+```
+
+`effects::tick` runs the three steps in order (`tick_lifetimes`, `apply_fades`,
+`tick_texture_overrides`) and then despawns expired entities; call the pieces
+individually if you need a different order.
+
+## Tunables and telemetry
+
+> **Status.** Implemented and unit-tested; not yet used by a game.
+
+`engine::tunables::Tunables` loads a flat RON map of name → value
+(`{ "music.near": 12.0, "ghost.life": 4, "debug.god": true, "music.track": "a" }`)
+and lets you retune a running game: getters (`f32`, `i64`, `bool`, `string`)
+take a compiled-in default and never fail — a missing name or wrong type
+returns the default and is recorded in `Tunables::misses()`. An integer is
+accepted by `f32` getters. `reload_if_changed()` (one `metadata` call per
+frame) or `reload_if_touched(paths)` (feed it `HotReloadWatcher::poll_events`)
+reloads; a file that fails to parse keeps the old values and sets
+`last_error()`; `changes()` / `take_changes()` list what moved.
+`Tunables::for_build(path)` ignores the file in release builds unless the
+`JAME_TUNABLES` env var is set, so players can't retune a shipped game.
+
+`engine::telemetry::Telemetry` is the balance-CSV hook: `record(event,
+&[(field, f64)])` appends rows, writing an `event,<fields>` header the first
+time an event name (or its field list) appears. Output is buffered (`flush()`
+or drop). `Telemetry::from_env(var)` is disabled unless the variable is set, and
+a disabled hook costs one branch per call. IO errors disable it rather than
+panic.
+
+```rust
+use engine::telemetry::Telemetry;
+use engine::tunables::Tunables;
+
+// assets/tunables.ron:   { "music.near": 12.0, "ghost.life": 0.4, "debug.god": false }
+fn setup() -> (Tunables, Telemetry) {
+    (
+        // Debug builds (or JAME_TUNABLES set) read the file; release uses the defaults below.
+        Tunables::for_build("assets/tunables.ron"),
+        // Disabled unless MYGAME_BALANCE=path/to/balance.csv is set.
+        Telemetry::from_env("MYGAME_BALANCE"),
+    )
+}
+
+fn each_frame(tun: &mut Tunables, tel: &mut Telemetry, t: f32, hp: f32) {
+    if tun.reload_if_changed() {
+        for c in tun.take_changes() {
+            log::info!("tunable {} changed: {:?} -> {:?}", c.name, c.old, c.new);
+        }
+    }
+    // Getters never fail: a missing or wrong-typed name returns the default.
+    let near = tun.f32("music.near", 12.0);
+    let ghost_life = tun.f32("ghost.life", 0.4);
+    let god = tun.bool("debug.god", false);
+    let _ = (near, ghost_life, god);
+
+    // Header row is written the first time an event name appears.
+    tel.record("kill", &[("t", t as f64), ("hp", hp as f64)]);
+}
+```
+
+## Input action maps
+
+> **Status.** Implemented and unit-tested (including a headless input
+> source); the games' own input code does not use it yet.
+
+`engine::input_map` lets you name an *action* once and bind it to devices in
+data. A map is RON — see the fully commented `docs/examples/input_map.ron`:
+
+```ron
+(version: 1,
+ contexts: [(name: "gameplay"), (name: "menu", enabled: false, exclusive: true)],
+ actions: [
+   (name: "jump", context: "gameplay", bindings: [Key("Space"), PadButton("A")]),
+   (name: "move", context: "gameplay", bindings: [
+       Composite(up: Key("W"), down: Key("S"), left: Key("A"), right: Key("D")),
+       Stick(x: "LeftX", y: "LeftY")]),
+ ])
+```
+
+Bindings are `Key`, `Mouse`, `PadButton`, `PadAxis`, `Pair` (1-D, e.g. Q/E),
+`Composite` (WASD-style vec2) and `Stick` (radial deadzone). `ActionState` is
+resolved once per frame from any `InputSource` (`engine::input::Input` and
+`headless::HeadlessInput` both implement it) and answers `pressed`,
+`just_pressed`, `just_released`, `axis` and `vec2` by action name; unknown
+actions read as idle. Contexts are layers: an enabled `exclusive` context mutes
+every context declared before it, and actions with no context are always live.
+vec2 uses +y up.
+
+```rust
+use std::path::Path;
+
+use engine::input::Input;
+use engine::input_map::{ActionMap, ActionState};
+
+struct Controls {
+    map: ActionMap,
+    state: ActionState,
+}
+
+fn load_controls() -> anyhow::Result<Controls> {
+    // Shipped defaults, with the player's rebinds layered on top (missing file is fine).
+    let (map, warnings) = ActionMap::load_layered(
+        Path::new("assets/input_map.ron"),
+        Path::new("assets/input_overrides.ron"),
+    )?;
+    for w in warnings {
+        log::warn!("{w}");
+    }
+    let state = ActionState::new(&map);
+    Ok(Controls { map, state })
+}
+
+// Once per frame, e.g. at the top of Game::update.
+fn update(c: &mut Controls, input: &Input, paused: bool) {
+    // An enabled `exclusive` context mutes every context declared before it.
+    c.state.set_context_enabled("menu", paused);
+    c.state.resolve(&c.map, input);
+
+    if c.state.just_pressed("jump") {
+        // ...
+    }
+    let movement = c.state.vec2("move"); // +x right, +y up, length <= 1
+    let throttle = c.state.axis("throttle"); // -1..1
+    let _ = (movement, throttle);
+}
+```
+
+Rebinding is `ActionMap::rebind` with a `ConflictPolicy` (`Reject`, `Swap`,
+`Allow`) and `RebindState::poll` to capture the next input; player rebinds are
+saved as a separate overrides RON (`save_overrides` writes only actions that
+differ from the shipped defaults) and layered back with `load_layered`.
+`draw_rebind_panel` / `show_rebind_window` provide a ready-made egui settings UI.
+
+## Skeletal animation
+
+> **Status.** The math, state machine, CPU skinning, glTF import and RON asset
+> format are unit-tested. **`SkinnedMesh`'s GL upload and drawing have never run
+> on a real GL context**, no game or editor draws a skinned mesh yet, there is
+> no GPU-skinning path, and glTF import reads the first skin only.
+
+`engine::skeletal` is separate from the older `engine::rig` (rigid parts) and
+`engine::animation` (orbit/bob). Layers, bottom up: `pose` (joint transforms,
+shortest-arc blending, additive layers), `skeleton` (hierarchy, bind pose,
+inverse-bind, joint palette), `clip` (keyframed `AnimationClip`s, optional root
+motion), `animator` (`AnimatorController` asset + `SkeletalAnimator`
+component), `skin` (per-vertex joints/weights, `SkinnedMeshData::skin`,
+`SkinnedMesh` GPU wrapper) and `import` (`load_gltf_skinned`,
+`AnimationSet::load_from_file/save_to_file`, `convert_gltf_to_ron`).
+
+A controller names its parameters (float/bool/trigger), states (a clip or a
+1-D `Blend1D`), and transitions with conditions, crossfade duration and an
+optional `exit_time`. `SkeletalAnimator::update` is a pure function of state
+and `dt`, so a fixed `dt` sequence gives bit-identical output.
+
+```rust
+use std::path::Path;
+use std::sync::Arc;
+
+use engine::ecs::{Transform, World};
+use engine::schedule::Schedule;
+use engine::skeletal::import::load_gltf_skinned;
+use engine::skeletal::{
+    skeletal_animation_system, AnimationSet, AnimatorController, Compare, Condition, Motion, ParamDef,
+    ParamValue, SkeletalAnimator, StateDef, TransitionDef, SKELETAL_ANIMATION_SYSTEM,
+};
+
+fn state(name: &str) -> StateDef {
+    StateDef { name: name.into(), motion: Motion::Clip { clip: name.into() }, speed: 1.0 }
+}
+
+fn controller() -> AnimatorController {
+    let cond = |compare| vec![Condition { parameter: "speed".into(), compare }];
+    AnimatorController {
+        name: "hero".into(),
+        parameters: vec![ParamDef { name: "speed".into(), default: ParamValue::Float(0.0) }],
+        states: vec![state("idle"), state("walk")],
+        transitions: vec![
+            TransitionDef { from: Some("idle".into()), to: "walk".into(), conditions: cond(Compare::Greater(0.1)), duration: 0.2, exit_time: None },
+            TransitionDef { from: Some("walk".into()), to: "idle".into(), conditions: cond(Compare::Less(0.1)), duration: 0.2, exit_time: None },
+        ],
+        default_state: "idle".into(),
+    }
+}
+
+fn spawn_hero(world: &mut World, schedule: &mut Schedule) -> anyhow::Result<()> {
+    // Skeleton + clips (+ skinned meshes) straight from a glTF/GLB...
+    let model = load_gltf_skinned(Path::new("assets/models/hero.glb"))?;
+    // ...or from the RON form written by `convert_gltf_to_ron`:
+    // let set = AnimationSet::load_from_file(Path::new("assets/anims/hero.set.ron"))?;
+    let set: Arc<AnimationSet> = Arc::new(model.set);
+    let anim = SkeletalAnimator::new(set, Arc::new(controller()))?;
+    world.spawn((Transform::default(), anim));
+
+    // Updates every animator and applies root motion to the Transform.
+    schedule.add_system(SKELETAL_ANIMATION_SYSTEM, skeletal_animation_system);
+    Ok(())
+}
+
+fn drive(world: &mut World, speed: f32) {
+    for (_, anim) in world.query_mut::<&mut SkeletalAnimator>() {
+        anim.set_float("speed", speed);
+        // anim.palette() is the joint palette for SkinnedMesh::update(gl, palette)
+        let _palette = anim.palette();
+    }
+}
+```
+
+## Headless testing
+
+`engine::headless` runs game and editor logic frame by frame with no window,
+no GL context and no SDL video: `Headless` owns a `World`, `Resources` and a
+`Schedule` and steps them with a fixed `dt`. `with_default_systems()` adds
+`"physics"` (`Stage::PostUpdate`) and `"effects"` (`effects::tick`,
+`Stage::Last`) so your `Update` systems run before both. Scripted input —
+`press(frame, key)`, `release`, `tap`, `set_axis` — is applied at the start of
+the step where `clock().frame == frame` and read through the `HeadlessInput`
+resource. `step`, `step_n`, `run_until`, `spawn`, `count`, `entities_with`,
+`get`, `position` and friends cover the rest; `headless::fakes` provides
+GL-free stand-ins for components that hold GPU handles. `EditorHeadless` adds
+an `EditorState` + `EditorShell` so Play / Stop / undo can be tested too (it
+only steps the simulation while in Play).
+
+```rust
+use engine::ecs::Transform;
+use engine::effects::Lifetime;
+use engine::headless::{EditorHeadless, Headless, HeadlessInput};
+
+#[test]
+fn lifetime_entity_expires_after_four_frames() {
+    let mut h = Headless::with_default_systems(); // adds "physics" and "effects" systems
+    h.set_dt(0.25); // powers of two keep the f32 sums exact
+    let spark = h.spawn((Transform::default(), Lifetime::new(1.0)));
+
+    // Scripted input: press "jump" on frame 2, release on frame 5.
+    h.press(2, "jump");
+    h.release(5, "jump");
+    h.add_system("count_held", |ctx| {
+        if ctx.res::<HeadlessInput>().is_down("jump") {
+            *ctx.res_mut::<u32>() += 1;
+        }
+    });
+    h.resources.insert(0u32);
+
+    assert_eq!(h.run_until(100, |h| !h.contains(spark)), Some(4));
+    h.step_n(6, 0.25);
+    assert_eq!(h.clock().frame, 10);
+    assert_eq!(*h.resources.require::<u32>(), 3); // held on frames 2, 3, 4
+}
+
+#[test]
+fn editor_play_and_stop_without_a_window() {
+    let mut e = EditorHeadless::new();
+    assert_eq!(e.step(1.0 / 60.0), false); // only steps while in Play
+    e.play();
+    assert_eq!(e.step_n(10, 1.0 / 60.0), 10);
+    e.stop(); // restores the pre-Play snapshot
+}
+```
+
+`engine::testkit::SmokeTestHost` is a different tool: it drives a *running*
+game from a `.pss` script (see "Scripted smoke tests").
+
+## The docked editor
+
+The engine has two editors. The **legacy** F1/F2 panels live in each game's
+`main.rs` (see "The editor GUI"). The **docked editor** is
+`engine::editor::runtime::EditorRuntime`: a dockable window with Viewport,
+Hierarchy, Inspector, Assets, Console, Profiler, UI Designer and Settings tabs
+plus any host tabs, gizmos (move/rotate/scale), viewport picking, undo/redo,
+Play / Pause / Stop with a world snapshot, and a File menu for scenes. Nothing
+in `engine::editor` touches SDL or GL except the runtime's viewport target, so
+the logic is testable headless.
+
+**Opening it.** The key is chosen by the host game. **F4** opens the dock in
+`sandbox`, `mushroom_man` and `walkaround_demo` (the legacy F1/F2 panels stay on
+their own keys); `physics-sandbox` binds F1. *Note:* a change that reworks which
+of F1/F2/F4 open the dock in the games is in flight — the engine only exposes
+`EditorRuntime::open: bool`, so check the game's `handle_event`. Inside the dock
+**F2 is Rename**, not the legacy level panel. Release builds never start the
+runtime (`editor_available()` is `cfg!(debug_assertions)`).
+
+### Hosting recipe
+
+Per frame the game does: (1) `handle_event` for every SDL event, (2)
+`ensure_target` + `view_proj` to learn where and how to render, (3) render its
+scene into `target` (`Renderer::present_to(gl, rt.target.framebuffer(), ..)`),
+(4) `run_ui` to draw the docked editor around it and run gizmos/picking. See
+`games/physics-sandbox/src/main.rs` for the smallest complete host.
+
+```rust
+use std::path::PathBuf;
+
+use anyhow::Result;
+use engine::app::{Context, Game};
+use engine::ecs::World;
+use engine::editor::runtime::{EditorRuntime, NoHost};
+use engine::editor::shell::PerfSnapshot;
+use engine::editor::Registry;
+use engine::sdl2::event::Event;
+use engine::sdl2::keyboard::Keycode;
+
+#[derive(Clone)]
+struct Health(f32);
+
+struct MyGame {
+    world: World,
+    editor: Option<EditorRuntime>,
+}
+
+impl Game for MyGame {
+    fn init(&mut self, ctx: &mut Context) -> Result<()> {
+        // Components the editor must clone/restore (duplicate, undo, Play -> Stop).
+        let mut registry = Registry::with_defaults();
+        registry.register_cloneable::<Health>();
+
+        let project = PathBuf::from("project");
+        let rt = EditorRuntime::new(ctx.gl_arc(), registry, Some(project.join(".editor")), Vec::new())?
+            .with_asset_root(project.join("assets")) // Assets tab
+            .with_ui_dir(project.join("ui")) // UI Designer tab
+            .with_project_dir(project); // <dir>/scenes, <dir>/prefabs
+        self.editor = Some(rt);
+        Ok(())
+    }
+
+    fn handle_event(&mut self, _ctx: &mut Context, event: &Event) {
+        if let Some(rt) = self.editor.as_mut() {
+            rt.handle_event(event); // forwards to egui only while open
+            if matches!(event, Event::KeyDown { keycode: Some(Keycode::F4), repeat: false, .. }) {
+                rt.open = !rt.open;
+                if !rt.open {
+                    rt.save_layout();
+                }
+            }
+        }
+    }
+
+    fn update(&mut self, _ctx: &mut Context, _dt: f32) -> Result<()> {
+        // Closed -> plain game; open -> only simulate while the editor is in Play.
+        let simulating = self.editor.as_ref().map_or(true, |e| e.is_simulating());
+        if simulating {
+            // game logic / schedule.run(...)
+        }
+        Ok(())
+    }
+
+    fn render(&mut self, ctx: &mut Context) -> Result<()> {
+        let gl = ctx.gl();
+        let drawable = ctx.drawable_size();
+        let Some(mut rt) = self.editor.take() else { return Ok(()) };
+        if rt.open {
+            let size = rt.ensure_target(gl, drawable)?; // Viewport tab framebuffer
+            let (_view, _proj) = rt.view_proj(); // editor camera while not simulating
+            // Render the scene into rt.target.framebuffer() at `size`, e.g.
+            // renderer.present_to(gl, rt.target.framebuffer(), size, &Default::default());
+            let _ = size;
+            let dt = ctx.time.delta.max(1e-4);
+            let perf = PerfSnapshot { fps: 1.0 / dt, frame_ms: dt * 1000.0, entities: self.world.len() as usize, draw_calls: 0 };
+            rt.run_ui(gl, drawable, &mut self.world, &mut NoHost, perf);
+        } else {
+            // normal game rendering
+        }
+        self.editor = Some(rt);
+        Ok(())
+    }
+}
+```
+
+- `Registry::with_defaults()` knows `Transform`, names, hierarchy, etc.; call
+  `register_cloneable::<T>()` for each game component, otherwise duplicate,
+  undo and Play → Stop will not restore it.
+- `EditorRuntime::new` registers the scene components (`EntityId`, prefab
+  links) for you. `config_dir` stores preferences and the dock layout;
+  `save_layout()` writes them.
+- When the dock is closed the game runs as a plain game; when open, simulate
+  only while `is_simulating()` (Play) and use `wants_pointer()` /
+  `wants_keyboard()` to keep the game from reacting to UI clicks and typing.
+- Game-specific tabs: pass tab names to `EditorRuntime::new` and implement
+  `ShellHost::tab_ui` (also `viewport_overlay`, `selection_bounds`,
+  `accepts_asset_drop`). `NoHost` is the do-nothing host.
+
+### Assets and UI Designer tabs
+
+Both have built-in content that is used when the host's `tab_ui` declines the
+tab. **Assets** browses a folder (`set_asset_root`), with search, selection,
+double-click (`ShellEvent::AssetOpened`) and drag to the viewport/hierarchy
+(`ShellEvent::AssetDropped`); only png/jpg get thumbnails. The game must handle
+those events itself (`EditorShell::take_events`). **UI Designer** edits `.ron`
+UI documents in the directory given to `set_ui_dir` (built-in `pause_menu` and
+`hud` examples otherwise) with a live canvas preview, undo/redo and Load/Save.
+With no root/directory set, Assets shows an empty state and the designer shows
+only the examples.
+
+### RON scenes and prefabs
+
+With `with_project_dir(dir)` (or `set_project_dir`), the File menu works on
+`<dir>/scenes/*.scene.ron`, and prefabs live in `<dir>/prefabs/*.prefab.ron`;
+without a project dir scene paths are used as typed and the prefab entries are
+disabled. `RonSceneIo` (`editor::ron_scene_io`) is the shell's default scene
+backend: New / Open / Save / Save As / Revert, a `*` dirty marker driven by the
+undo stack, `<scene>.autosave` with crash recovery, and unsaved-changes prompts.
+Legacy `level::Level` files open through `level_compat` and are only written
+back in the scene format after a confirmation. **Caveat:** `sandbox`,
+`mushroom_man` and `walkaround_demo` currently replace the shell's scene backend
+with `DisabledSceneIo` in their `docked.rs` (their levels live in the legacy Level
+tab); drop that line and call `set_project_dir` to turn File > Open/Save on.
+
+A `Scene` is deterministic, diff-friendly RON: entities in hierarchy order with
+persistent `EntityId`s, components stored as named fields (`SceneValue`),
+unknown components/fields preserved through load and save. Prefabs are scene
+files whose first entity is the root; instances carry per-field overrides
+(derived by diffing against the prefab) and nest. In the Hierarchy: *Create
+Prefab from Selection*, *Instantiate Prefab*, and on an instance *Apply to
+Prefab*, *Revert All*, *Unpack*; overridden fields are marked in the Inspector
+with a per-field *Revert*. Known gaps are tracked in `docs/KNOWN-ISSUES.md`.
+
+### Scene format versioning
+
+Every scene file starts with `format_version` (currently
+`SCENE_FORMAT_VERSION = 1`, with no built-in migrations yet). A load goes
+through `Scene::from_ron_with(text, migrations, target)`:
+
+- a file **newer** than `target` is refused with `SceneError::TooNew`, never
+  silently mangled;
+- an older file is upgraded one step at a time: while `version < target`, the
+  `Migration { from: version, apply }` is looked up and run, then the version is
+  stamped `version + 1` by the loader (a migration never sets it itself). A gap
+  in the list — including a file with no `format_version` at all, which reads as
+  version 0 — is `SceneError::NoMigration(version)`; a migration returning
+  `Err(msg)` becomes `SceneError::Migration(version, msg)`.
+
+To ship a format change: write a `fn(&mut Scene) -> Result<(), String>`, add it
+to `builtin_migrations()` in `editor/scene.rs`, and bump `SCENE_FORMAT_VERSION`.
+The worked example (v1 → v2 renaming `Health.hp`, a two-step chain, and the
+TooNew / NoMigration / failure cases) is tested in
+`engine/src/editor/scene_migration_tests.rs`:
+
+```rust
+use std::path::Path;
+
+use engine::ecs::World;
+use engine::editor::scene::{Migration, Scene, SceneDocument, SceneError, SceneValue};
+use engine::editor::Registry;
+
+// v1 -> v2: Health.hp became Health.current (+ a new Health.max).
+fn health_hp_to_current(scene: &mut Scene) -> Result<(), String> {
+    for entity in &mut scene.entities {
+        let Some(health) = entity.components.get_mut("Health") else { continue };
+        match health.remove("hp") {
+            Some(SceneValue::F32(hp)) => {
+                health.insert("current".into(), SceneValue::F32(hp));
+                health.insert("max".into(), SceneValue::F32(hp));
+            }
+            Some(other) => return Err(format!("Health.hp is not an F32: {other:?}")),
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+// `Migration::apply` is a plain fn pointer; from_ron_with stamps the new version itself.
+fn load_as_v2(text: &str) -> Result<Scene, SceneError> {
+    let chain = [Migration { from: 1, apply: health_hp_to_current }];
+    Scene::from_ron_with(text, &chain, 2)
+}
+
+// Loading a scene file into a world (what File > Open does), and saving it back.
+fn open_and_save(world: &mut World, reg: &Registry) -> Result<(), SceneError> {
+    let (mut doc, result) = SceneDocument::open(Path::new("project/scenes/arena.scene.ron"), world, reg)?;
+    for w in &result.report.warnings {
+        log::warn!("{w}"); // unknown components/fields are kept, but reported
+    }
+    doc.save(world, reg)
+}
+```
+
 ## Adding a new, separate game
 
-**Fastest path:** `.\new_game.ps1 -Name mygame` copies `games/sandbox` as a
+**Fastest path:** `.\new_game.ps1 -Name mygame` (Windows) or
+`./new_game.sh mygame` (Linux/macOS, bash; add `--no-build` to skip the final
+`cargo build -p mygame` check) copies `games/sandbox` as a
 template, renames its crate to `mygame`, registers it in the workspace
 root `Cargo.toml`, retitles its window/error-dialog strings, and builds it
 to confirm the scaffold actually compiles. Everything comes along except
@@ -1756,7 +2445,8 @@ piece, rather than a truly blank slate.
 ## Exporting a game (shipping a standalone `.exe`)
 
 ```
-.\package.ps1 -Game sandbox
+.\package.ps1 -Game sandbox      # Windows
+./package.sh sandbox             # Linux/macOS (bash); --skip-build reuses target/release/<game>
 ```
 
 This builds `-p sandbox` in release mode and assembles `dist/sandbox/` with
@@ -1768,7 +2458,11 @@ players a stale position instead of a fresh game) — zip that folder (or
 hand it to an installer builder like Inno Setup/WiX if you want a
 "Setup.exe") and it runs standalone on another machine. Substitute your
 own game's crate name for `-Game`; if your game adds its own asset
-subfolder beyond this list, add it to `package.ps1`'s copy loop too.
+subfolder beyond this list, add it to the copy loop in `package.ps1` and
+`package.sh` too. On Linux/macOS the binary is `target/release/<game>` (no
+`.exe`); `package.sh` also honours `CARGO_TARGET_DIR`. There is no web
+packaging: building for `wasm32-unknown-emscripten` is not documented in this
+repo beyond cfg-gated code paths, so neither script has a web mode.
 
 A few things make this work, already wired up for every game in the workspace:
 
@@ -1805,8 +2499,9 @@ A few things make this work, already wired up for every game in the workspace:
   was already gated on "currently in `EditorMode::Edit`" — so a release
   build, which never enters `Edit` mode (`Sandbox::init` calls
   `enter_play_mode` immediately when `!editor_available()`), simply never
-  reaches any of it. `package.ps1` already builds `--release`, so this
-  needs no packaging changes: what a player gets is exactly the game,
+  reaches any of it. `package.ps1`/`package.sh` already build `--release`, so this
+  needs no packaging changes (the docked F4 editor is gated the same way —
+  the game only starts its `EditorRuntime` when `editor_available()`): what a player gets is exactly the game,
   booting straight into Play. The pause menu's middle button becomes
   **"Restart Level"** instead of "Exit to Editor" (see "Pausing" above) —
   there being no editor to exit to.

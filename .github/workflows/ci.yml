@@ -2,11 +2,62 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, dust/main]
   pull_request:
-    branches: [master]
+    branches: [master, dust/main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  linux:
+    name: linux
+    runs-on: ubuntu-latest
+    env:
+      # Safety net: nothing in the test suite should open a window or an audio
+      # device, but if something does it gets SDL's dummy drivers, not a crash.
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # sdl2-sys "bundled" builds SDL2 from source (CMake + a C compiler).
+      # build-essential/cmake/pkg-config are the toolchain; the -dev packages
+      # are what SDL's configure step probes for (audio, GL, X11), plus
+      # libasound2-dev which rodio (via cpal) needs to link on Linux.
+      # .cargo/config.toml already pins CMAKE_POLICY_VERSION_MINIMUM and
+      # CFLAGS=-std=gnu11 for the same reasons as on a dev machine.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libasound2-dev libudev-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libxss-dev libxkbcommon-dev libwayland-dev
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --verbose
+
+      # five_hundred_body_benchmark (engine/src/physics/sim.rs) is a timing
+      # check that flakes on loaded shared runners, so it is skipped here.
+      - name: Test workspace
+        run: cargo test --workspace -- --skip five_hundred_body_benchmark
+
+      # Release profile is LTO + codegen-units=1 + panic=abort; `check` proves
+      # it (and the cfg!(debug_assertions)-gated editor paths) still compiles
+      # without paying for a full optimized link.
+      - name: Check workspace (release)
+        run: cargo check --workspace --release
+
   build:
     runs-on: windows-latest
     steps:

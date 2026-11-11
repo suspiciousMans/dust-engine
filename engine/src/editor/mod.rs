@@ -38,6 +38,8 @@ pub mod ui;
 pub mod viewport_target;
 
 #[cfg(test)]
+mod scene_migration_tests;
+#[cfg(test)]
 mod scene_wiring_tests;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
