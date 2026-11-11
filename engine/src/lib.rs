@@ -32,9 +32,11 @@ pub mod script;
 pub mod shader;
 #[cfg(feature = "legacy-pss")]
 pub mod testkit;
+pub mod telemetry;
 pub mod texture;
 pub mod time;
 pub mod tilemap;
+pub mod tunables;
 pub mod ui;
 pub mod ui_designer;
 
