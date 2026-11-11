@@ -1497,7 +1497,7 @@ mod tests {
         fn release(&mut self, k: &str) {
             self.keys.remove(k);
         }
-        fn axis(&mut self, a: &str, v: f32) {
+        fn set_axis(&mut self, a: &str, v: f32) {
             self.axes.insert(a.into(), v);
         }
     }
@@ -1613,19 +1613,19 @@ mod tests {
         .unwrap();
         let mut st = ActionState::new(&m);
         let mut f = Fake::default();
-        f.axis("LeftX", 0.1); // inside deadzone
+        f.set_axis("LeftX", 0.1); // inside deadzone
         st.resolve(&m, &f);
         assert_eq!(st.axis("right"), 0.0);
         assert!(!st.pressed("right"));
 
-        f.axis("LeftX", 0.6); // (0.6-0.2)/0.8 = 0.5
+        f.set_axis("LeftX", 0.6); // (0.6-0.2)/0.8 = 0.5
         st.resolve(&m, &f);
         assert!((st.axis("right") - 0.5).abs() < 1e-5);
         assert_eq!(st.axis("left"), 0.0);
         assert!(st.pressed("right") && st.just_pressed("right"));
         assert!((st.axis("x") - 0.2).abs() < 1e-5); // (0.6-0.5)/0.5
 
-        f.axis("LeftX", -1.0);
+        f.set_axis("LeftX", -1.0);
         st.resolve(&m, &f);
         assert_eq!(st.axis("right"), 0.0);
         assert!((st.axis("left") - 1.0).abs() < 1e-5);
@@ -1663,16 +1663,16 @@ mod tests {
         let m = example();
         let mut st = ActionState::new(&m);
         let mut f = Fake::default();
-        f.axis("LeftX", 0.2);
-        f.axis("LeftY", 0.1);
+        f.set_axis("LeftX", 0.2);
+        f.set_axis("LeftY", 0.1);
         st.resolve(&m, &f);
         assert_eq!(st.vec2("move"), Vec2::ZERO); // |(0.2,0.1)| = 0.22 < 0.25
-        f.axis("LeftX", 0.0);
-        f.axis("LeftY", -1.0); // SDL: stick pushed up
+        f.set_axis("LeftX", 0.0);
+        f.set_axis("LeftY", -1.0); // SDL: stick pushed up
         st.resolve(&m, &f);
         assert!((st.vec2("move") - Vec2::new(0.0, 1.0)).length() < 1e-5);
-        f.axis("LeftX", 1.0);
-        f.axis("LeftY", 1.0); // down-right, corner > 1 clamps
+        f.set_axis("LeftX", 1.0);
+        f.set_axis("LeftY", 1.0); // down-right, corner > 1 clamps
         st.resolve(&m, &f);
         let v = st.vec2("move");
         assert!(v.x > 0.0 && v.y < 0.0 && v.length() <= 1.0 + 1e-5);
@@ -2076,11 +2076,14 @@ mod tests {
             }],
             ..Default::default()
         };
-        // First frame is the grace frame (the click that started listening).
+        // First frame is the grace frame (the click that started listening): a key arriving
+        // in it is ignored. (egui then flags the same still-held key as `repeat`, so the
+        // capture frame uses a fresh context.)
         run_frame_with(&ctx, key_event(), |ui| {
             assert!(!draw_rebind_panel(ui, &mut m, &mut st, &defaults, None));
         });
         assert!(st.listening.is_some());
+        let ctx = egui::Context::default();
         run_frame_with(&ctx, key_event(), |ui| {
             assert!(draw_rebind_panel(ui, &mut m, &mut st, &defaults, None));
         });
@@ -2102,7 +2105,7 @@ mod tests {
         run_frame_with(&ctx, esc.clone(), |ui| {
             draw_rebind_panel(ui, &mut m, &mut st, &defaults, None);
         });
-        run_frame_with(&ctx, esc, |ui| {
+        run_frame_with(&egui::Context::default(), esc, |ui| {
             draw_rebind_panel(ui, &mut m, &mut st, &defaults, None);
         });
         assert!(st.listening.is_none());

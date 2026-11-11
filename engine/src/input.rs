@@ -117,7 +117,6 @@ impl Input {
                     Axis::RightY => self.right_stick.1 = normalized,
                     Axis::TriggerLeft => self.triggers.0 = normalized.max(0.0),
                     Axis::TriggerRight => self.triggers.1 = normalized.max(0.0),
-                    _ => {}
                 }
             }
             Event::ControllerButtonDown { button, .. } => {
