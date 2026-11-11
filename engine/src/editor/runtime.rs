@@ -90,7 +90,10 @@ pub struct EditorRuntime {
 
 impl EditorRuntime {
     /// `config_dir` holds saved prefs and dock layout (created on save).
-    pub fn new(gl: Arc<glow::Context>, registry: Registry, config_dir: Option<PathBuf>, host_tabs: Vec<String>) -> anyhow::Result<Self> {
+    pub fn new(gl: Arc<glow::Context>, mut registry: Registry, config_dir: Option<PathBuf>, host_tabs: Vec<String>) -> anyhow::Result<Self> {
+        // Scene files and prefab instances need entity ids / prefab links to
+        // survive undo, duplicate and play snapshots.
+        super::scene::register_scene_components(&mut registry);
         let shell = match &config_dir {
             Some(dir) => EditorShell::load(dir, host_tabs),
             None => EditorShell::new(host_tabs),
@@ -128,6 +131,17 @@ impl EditorRuntime {
     /// Builder form of [`Self::set_ui_dir`].
     pub fn with_ui_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.set_ui_dir(Some(dir.into()));
+        self
+    }
+
+    /// Project folder for scenes (`<dir>/scenes`) and prefabs (`<dir>/prefabs`).
+    /// `None` (default) disables the prefab menu entries.
+    pub fn set_project_dir(&mut self, dir: Option<PathBuf>) {
+        self.shell.set_project_dir(dir);
+    }
+
+    pub fn with_project_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.set_project_dir(Some(dir.into()));
         self
     }
 

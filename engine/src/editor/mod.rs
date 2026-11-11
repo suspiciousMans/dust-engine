@@ -18,8 +18,10 @@ pub mod interaction;
 pub mod modal;
 pub mod picking;
 pub mod prefs;
+pub mod ron_scene_io;
 pub mod runtime;
 pub mod scene_io;
+pub mod scene_prompts;
 pub mod shell;
 pub mod snapping;
 pub mod world_xform;
@@ -27,11 +29,16 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod level_compat;
 pub mod prefab;
+pub mod prefab_cmd;
+pub mod prefab_ui;
 pub mod scene;
 pub mod selection;
 pub mod state;
 pub mod ui;
 pub mod viewport_target;
+
+#[cfg(test)]
+mod scene_wiring_tests;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};

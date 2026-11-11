@@ -123,6 +123,8 @@ pub struct EditorState {
     pub(crate) merge_pending: bool,
     /// Last command error, for a status bar / toast.
     pub last_error: Option<String>,
+    /// Prefab library handle, name prompt and inspector override cache.
+    pub prefab_ui: super::prefab_ui::PrefabUiState,
 }
 
 impl Default for EditorState {
@@ -150,6 +152,7 @@ impl EditorState {
             add_component_filter: String::new(),
             merge_pending: false,
             last_error: None,
+            prefab_ui: Default::default(),
         }
     }
 

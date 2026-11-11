@@ -230,6 +230,7 @@ fn create_menu(ui: &mut Ui, state: &mut EditorState, world: &mut World, parent: 
             }
         }
     });
+    super::prefab_ui::create_menu_items(ui, state, world, parent);
 }
 
 // ---------------------------------------------------------------- hierarchy
@@ -287,6 +288,7 @@ pub fn draw_hierarchy(ui: &mut Ui, state: &mut EditorState, world: &mut World) {
             state.last_error = Some(e);
         }
     }
+    super::prefab_ui::draw_dialogs(ui.ctx(), state, world);
     if rows.is_empty() {
         ui.weak(if searching { "No matches" } else { "Scene is empty — use ＋ to create an object" });
     }
@@ -363,6 +365,7 @@ fn draw_row(
             return;
         }
 
+        super::prefab_ui::row_marker(ui, world, e);
         let mut text = RichText::new(display_name(world, e));
         if hidden {
             text = text.color(Color32::GRAY).italics();
@@ -418,6 +421,8 @@ fn draw_row(
                     }
                 }
             });
+            super::prefab_ui::create_menu_items(ui, state, world, Some(e));
+            super::prefab_ui::row_menu_items(ui, state, world, e);
         });
     });
 
@@ -486,6 +491,11 @@ pub fn draw_inspector(ui: &mut Ui, state: &mut EditorState, world: &mut World) {
         });
         if is_locked(world, primary) {
             ui.colored_label(Color32::YELLOW, "Locked — unlock to edit components");
+        }
+        if multi {
+            state.prefab_ui.clear_view();
+        } else {
+            super::prefab_ui::inspector_header(ui, state, world, primary);
         }
         ui.separator();
 
@@ -558,7 +568,7 @@ fn draw_field(
     let mixed = field_is_mixed(state, world, comp, field_name);
 
     let label = if mixed { RichText::new(format!("{} ≠", field.name)).italics() } else { RichText::new(field.name) };
-    let l = ui.label(label);
+    let l = super::prefab_ui::field_label(ui, state, world, comp.name, field.name, label);
     if !field.tooltip.is_empty() {
         l.on_hover_text(field.tooltip);
     } else if mixed {

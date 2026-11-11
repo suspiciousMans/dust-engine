@@ -12,7 +12,9 @@ use hecs::{Entity, World};
 use super::camera::{camera_key, CameraInput, EditorCamera};
 use super::console::Console;
 use super::prefs::{self, EditorPrefs};
-use super::scene_io::{LevelSceneIo, RegistrySnapshot, SceneIo, SceneSnapshot};
+use super::ron_scene_io::{resolve_scene_path, RonSceneIo};
+use super::scene_io::{RegistrySnapshot, SceneIo, SceneSnapshot};
+use super::scene_prompts::{draw_confirm, Choice, Confirm, PendingAction};
 use super::state::{EditorAction, EditorMode, EditorState, KeymapPreset, Tool};
 use super::ui::{draw_hierarchy, draw_inspector};
 use crate::ecs::Transform;
@@ -109,6 +111,9 @@ pub enum ShellEvent {
     /// (viewport pick, or the hierarchy row). `world_pos` is the point the
     /// editor-camera ray hits on the `y = 0` plane (viewport drops only).
     AssetDropped { path: std::path::PathBuf, target: Option<Entity>, world_pos: Option<Vec3> },
+    /// [`EditorShell::request_quit`] cleared (saved, discarded or nothing to
+    /// save): the host may close the window now.
+    QuitApproved,
 }
 
 /// Pending File > Open / Save As path prompt.
@@ -116,6 +121,8 @@ pub enum ShellEvent {
 struct PathPrompt {
     save: bool,
     buffer: String,
+    /// Continue with this once the save succeeded (unsaved-changes flow).
+    then: Option<PendingAction>,
 }
 
 pub struct EditorShell {
@@ -123,6 +130,8 @@ pub struct EditorShell {
     pub scene_io: Box<dyn SceneIo>,
     events: Vec<ShellEvent>,
     prompt: Option<PathPrompt>,
+    confirm: Option<Confirm>,
+    project_dir: Option<std::path::PathBuf>,
     show_about: bool,
     pub dock: DockState<EditorTab>,
     pub prefs: EditorPrefs,
@@ -139,9 +148,11 @@ impl EditorShell {
         let prefs = EditorPrefs::default();
         Self {
             snapshot: Box::new(RegistrySnapshot::default()),
-            scene_io: Box::new(LevelSceneIo::default()),
+            scene_io: Box::new(RonSceneIo::new()),
             events: Vec::new(),
             prompt: None,
+            confirm: None,
+            project_dir: None,
             show_about: false,
             dock: dock_skeleton::build_layout(prefs.layout_preset, &host_tabs),
             prefs,
@@ -235,16 +246,82 @@ impl EditorShell {
         }
     }
 
+    // ---- project
+
+    /// Project folder: scenes live in `<dir>/scenes` (relative paths typed in
+    /// the File prompts resolve there) and prefabs in `<dir>/prefabs`. With
+    /// `None` (the default) the prefab entries are disabled and scene paths
+    /// are used as typed.
+    pub fn set_project_dir(&mut self, dir: Option<std::path::PathBuf>) {
+        self.project_dir = dir;
+    }
+
+    pub fn project_dir(&self) -> Option<&std::path::Path> {
+        self.project_dir.as_deref()
+    }
+
+    pub fn scenes_dir(&self) -> Option<std::path::PathBuf> {
+        self.project_dir.as_ref().map(|d| d.join("scenes"))
+    }
+
+    pub fn prefabs_dir(&self) -> Option<std::path::PathBuf> {
+        self.project_dir.as_ref().map(|d| d.join("prefabs"))
+    }
+
+    /// Open scene's name, `*`-suffixed while it has unsaved changes.
+    pub fn scene_title(&self) -> String {
+        self.scene_io.title()
+    }
+
+    /// Text for the OS window title, e.g. `level.ron* - Dust Editor`.
+    pub fn window_title(&self, app: &str) -> String {
+        format!("{} - {app}", self.scene_title())
+    }
+
+    pub fn is_scene_dirty(&self) -> bool {
+        self.scene_io.is_dirty()
+    }
+
+    /// The prompt currently waiting for an answer, if any.
+    pub fn pending_confirm(&self) -> Option<&Confirm> {
+        self.confirm.as_ref()
+    }
+
+    /// Pushes project/undo state into the scene backend and prefab UI.
+    pub(crate) fn sync(&mut self, editor: &mut EditorState) {
+        editor.prefab_ui.set_root(self.prefabs_dir());
+        self.scene_io.set_prefab_library(editor.prefab_ui.library());
+        self.scene_io.sync_undo_dirty(editor.undo.is_dirty());
+    }
+
+    fn drain_scene_messages(&mut self) {
+        for m in self.scene_io.take_messages() {
+            self.console.warn(m);
+        }
+    }
+
+    fn after_load(&mut self, editor: &mut EditorState) {
+        editor.selection.clear();
+        editor.undo.clear();
+        self.sync(editor);
+        self.drain_scene_messages();
+    }
+
     // ---- scene file operations (Edit mode only; results go to the console)
+    //
+    // `new_scene` / `open_scene` / `save_scene` / `revert_scene` act
+    // immediately. The `request_*` variants are what the menu uses: they ask
+    // first when there are unsaved changes, an autosave to recover, or a
+    // legacy level file about to be converted.
 
     pub fn new_scene(&mut self, editor: &mut EditorState, world: &mut World) {
         if !editor.is_editing() {
+            self.console.warn("stop playing before creating a new scene");
             return;
         }
-        match self.scene_io.new_scene(world) {
+        match self.scene_io.new_scene_with(world, &editor.registry) {
             Ok(()) => {
-                editor.selection.clear();
-                editor.undo.clear();
+                self.after_load(editor);
                 self.console.info("new scene");
                 self.events.push(ShellEvent::SceneNew);
             }
@@ -254,12 +331,12 @@ impl EditorShell {
 
     pub fn open_scene(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) {
         if !editor.is_editing() {
+            self.console.warn("stop playing before opening a scene");
             return;
         }
-        match self.scene_io.open(path, world) {
+        match self.scene_io.open_with(path, world, &editor.registry) {
             Ok(()) => {
-                editor.selection.clear();
-                editor.undo.clear();
+                self.after_load(editor);
                 self.console.info(format!("opened {}", path.display()));
                 self.events.push(ShellEvent::SceneOpened(path.to_path_buf()));
             }
@@ -267,46 +344,252 @@ impl EditorShell {
         }
     }
 
-    pub fn save_scene(&mut self, world: &World, path: &std::path::Path) {
-        match self.scene_io.save(world, path) {
+    /// Opens the autosave of `path` (the scene stays dirty until saved).
+    pub fn open_recovery(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) {
+        if !editor.is_editing() {
+            return;
+        }
+        match self.scene_io.open_recovery_with(path, world, &editor.registry) {
             Ok(()) => {
-                self.console.info(format!("saved {}", path.display()));
-                self.events.push(ShellEvent::SceneSaved(path.to_path_buf()));
+                self.after_load(editor);
+                self.console.warn(format!("recovered autosave of {}; save to keep it", path.display()));
+                self.events.push(ShellEvent::SceneOpened(path.to_path_buf()));
             }
             Err(e) => self.console.error(e),
         }
     }
 
-    /// File > Save: current path, or prompts when there is none.
-    pub fn save_current(&mut self, world: &World) {
-        match self.scene_io.current_path().map(|p| p.to_path_buf()) {
-            Some(p) => self.save_scene(world, &p),
-            None => self.prompt = Some(PathPrompt { save: true, buffer: "level.ron".into() }),
+    /// Reloads the current file, dropping unsaved changes.
+    pub fn revert_scene(&mut self, editor: &mut EditorState, world: &mut World) {
+        if !editor.is_editing() {
+            return;
         }
+        match self.scene_io.revert_with(world, &editor.registry) {
+            Ok(()) => {
+                self.after_load(editor);
+                self.console.info("reverted to saved scene");
+                if let Some(p) = self.scene_io.current_path().map(|p| p.to_path_buf()) {
+                    self.events.push(ShellEvent::SceneOpened(p));
+                }
+            }
+            Err(e) => self.console.error(e),
+        }
+    }
+
+    /// Writes the scene to `path` without asking anything; returns success.
+    pub fn save_scene(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) -> bool {
+        self.sync(editor);
+        match self.scene_io.save_with(world, &editor.registry, path) {
+            Ok(()) => {
+                editor.undo.mark_saved();
+                self.sync(editor);
+                self.drain_scene_messages();
+                self.console.info(format!("saved {}", path.display()));
+                self.events.push(ShellEvent::SceneSaved(path.to_path_buf()));
+                true
+            }
+            Err(e) => {
+                self.console.error(e);
+                false
+            }
+        }
+    }
+
+    /// Saves to `path`, asking first if the backend wants confirmation
+    /// (legacy level -> scene format). `then` runs after a successful save.
+    fn save_then(&mut self, editor: &mut EditorState, world: &mut World, path: std::path::PathBuf, then: Option<PendingAction>) {
+        if let Some(message) = self.scene_io.save_confirmation(&path) {
+            self.confirm = Some(Confirm::LevelSave { path, message, then });
+            return;
+        }
+        if self.save_scene(editor, world, &path) {
+            if let Some(a) = then {
+                self.run_action(editor, world, a);
+            }
+        }
+    }
+
+    fn default_save_name(&self) -> String {
+        if self.project_dir.is_some() {
+            "untitled.scene.ron".into()
+        } else {
+            "level.ron".into()
+        }
+    }
+
+    /// File > Save: current path, or prompts when there is none.
+    pub fn save_current(&mut self, editor: &mut EditorState, world: &mut World) {
+        match self.scene_io.current_path().map(|p| p.to_path_buf()) {
+            Some(p) => self.save_then(editor, world, p, None),
+            None => self.prompt = Some(PathPrompt { save: true, buffer: self.default_save_name(), then: None }),
+        }
+    }
+
+    /// File > Save As: the typed path goes through the same confirmations.
+    pub fn save_scene_as(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) {
+        self.save_then(editor, world, path.to_path_buf(), None);
+    }
+
+    fn run_action(&mut self, editor: &mut EditorState, world: &mut World, action: PendingAction) {
+        match action {
+            PendingAction::NewScene => self.new_scene(editor, world),
+            PendingAction::OpenScene(p) => {
+                if self.scene_io.recovery_for(&p).is_some() {
+                    self.confirm = Some(Confirm::Recover(p));
+                } else {
+                    self.open_scene(editor, world, &p);
+                }
+            }
+            PendingAction::Quit => {
+                self.scene_io.close_clean();
+                self.events.push(ShellEvent::QuitApproved);
+            }
+        }
+    }
+
+    fn request(&mut self, editor: &mut EditorState, world: &mut World, action: PendingAction) {
+        self.sync(editor);
+        if self.scene_io.is_dirty() {
+            self.confirm = Some(Confirm::Unsaved(action));
+        } else {
+            self.run_action(editor, world, action);
+        }
+    }
+
+    /// File > New Scene, asking about unsaved changes first.
+    pub fn request_new_scene(&mut self, editor: &mut EditorState, world: &mut World) {
+        if editor.is_editing() {
+            self.request(editor, world, PendingAction::NewScene);
+        } else {
+            self.console.warn("stop playing before creating a new scene");
+        }
+    }
+
+    /// Opens `path`, asking about unsaved changes first and offering the
+    /// autosave when a newer one exists.
+    pub fn request_open_scene(&mut self, editor: &mut EditorState, world: &mut World, path: &std::path::Path) {
+        if editor.is_editing() {
+            self.request(editor, world, PendingAction::OpenScene(path.to_path_buf()));
+        } else {
+            self.console.warn("stop playing before opening a scene");
+        }
+    }
+
+    /// File > Revert, asking first if there is anything to lose.
+    pub fn request_revert(&mut self, editor: &mut EditorState, world: &mut World) {
+        self.sync(editor);
+        if self.scene_io.is_dirty() {
+            self.confirm = Some(Confirm::Revert);
+        } else {
+            self.revert_scene(editor, world);
+        }
+    }
+
+    /// The host wants to close the editor. Returns `true` when that is fine
+    /// right now (and emits [`ShellEvent::QuitApproved`]); otherwise a prompt
+    /// is shown and `QuitApproved` follows once the user saved or discarded.
+    /// Playing is stopped first so the scene on disk and in memory agree.
+    pub fn request_quit(&mut self, editor: &mut EditorState, world: &mut World) -> bool {
+        self.stop(editor, world);
+        self.sync(editor);
+        if self.scene_io.is_dirty() {
+            self.confirm = Some(Confirm::Unsaved(PendingAction::Quit));
+            false
+        } else {
+            self.run_action(editor, world, PendingAction::Quit);
+            true
+        }
+    }
+
+    /// Applies the user's answer to the pending prompt.
+    pub fn resolve_confirm(&mut self, editor: &mut EditorState, world: &mut World, choice: Choice) {
+        let Some(c) = self.confirm.take() else { return };
+        if choice == Choice::Cancel {
+            return;
+        }
+        match (c, choice) {
+            (Confirm::Unsaved(a), Choice::Primary) => match self.scene_io.current_path().map(|p| p.to_path_buf()) {
+                Some(p) => self.save_then(editor, world, p, Some(a)),
+                None => self.prompt = Some(PathPrompt { save: true, buffer: self.default_save_name(), then: Some(a) }),
+            },
+            (Confirm::Unsaved(a), _) => self.run_action(editor, world, a),
+            (Confirm::Recover(p), Choice::Primary) => self.open_recovery(editor, world, &p),
+            (Confirm::Recover(p), _) => {
+                self.scene_io.discard_autosave(&p);
+                self.open_scene(editor, world, &p);
+            }
+            (Confirm::LevelSave { path, then, .. }, _) => {
+                if self.save_scene(editor, world, &path) {
+                    if let Some(a) = then {
+                        self.run_action(editor, world, a);
+                    }
+                }
+            }
+            (Confirm::Revert, _) => self.revert_scene(editor, world),
+        }
+    }
+
+    /// `(is_save, text)` of the File > Open / Save As path prompt, if shown.
+    pub fn pending_path_prompt(&self) -> Option<(bool, &str)> {
+        self.prompt.as_ref().map(|p| (p.save, p.buffer.as_str()))
+    }
+
+    /// Answers the path prompt with `typed` (what pressing Open / Save does).
+    pub fn submit_path_prompt(&mut self, editor: &mut EditorState, world: &mut World, typed: &str) {
+        if let Some(mut pr) = self.prompt.take() {
+            pr.buffer = typed.to_string();
+            if !typed.trim().is_empty() {
+                self.run_path_prompt(editor, world, pr);
+            }
+        }
+    }
+
+    fn run_path_prompt(&mut self, editor: &mut EditorState, world: &mut World, mut pr: PathPrompt) {
+        let path = resolve_scene_path(self.project_dir.as_deref(), &pr.buffer);
+        if pr.save {
+            self.save_then(editor, world, path, pr.then.take());
+        } else {
+            self.request_open_scene(editor, world, &path);
+        }
+    }
+
+    /// File menu contents (also drawn headless in tests).
+    pub fn file_menu(&mut self, ui: &mut egui::Ui, editor: &mut EditorState, world: &mut World) {
+        let editing = editor.is_editing();
+        let has_path = self.scene_io.current_path().is_some();
+        if ui.add_enabled(editing, egui::Button::new("New Scene")).clicked() {
+            self.request_new_scene(editor, world);
+            ui.close_menu();
+        }
+        if ui.add_enabled(editing, egui::Button::new("Open...")).clicked() {
+            self.prompt = Some(PathPrompt { save: false, buffer: String::new(), then: None });
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.add_enabled(editing, egui::Button::new("Save")).clicked() {
+            self.save_current(editor, world);
+            ui.close_menu();
+        }
+        if ui.add_enabled(editing, egui::Button::new("Save As...")).clicked() {
+            let cur = self.scene_io.current_path().map(|p| p.display().to_string()).unwrap_or_else(|| self.default_save_name());
+            self.prompt = Some(PathPrompt { save: true, buffer: cur, then: None });
+            ui.close_menu();
+        }
+        if ui.add_enabled(editing && has_path, egui::Button::new("Revert")).on_disabled_hover_text("Nothing to revert to: the scene was never saved").clicked() {
+            self.request_revert(editor, world);
+            ui.close_menu();
+        }
+        ui.separator();
+        match &self.project_dir {
+            Some(d) => ui.weak(format!("Project: {}", d.display())),
+            None => ui.weak("No project directory: scene paths are used as typed, prefabs are disabled"),
+        };
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context, editor: &mut EditorState, world: &mut World) {
         egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("New Scene").clicked() {
-                        self.new_scene(editor, world);
-                        ui.close_menu();
-                    }
-                    if ui.button("Open...").clicked() {
-                        self.prompt = Some(PathPrompt { save: false, buffer: String::new() });
-                        ui.close_menu();
-                    }
-                    if ui.button("Save").clicked() {
-                        self.save_current(world);
-                        ui.close_menu();
-                    }
-                    if ui.button("Save As...").clicked() {
-                        let cur = self.scene_io.current_path().map(|p| p.display().to_string()).unwrap_or_default();
-                        self.prompt = Some(PathPrompt { save: true, buffer: cur });
-                        ui.close_menu();
-                    }
-                });
+                ui.menu_button("File", |ui| self.file_menu(ui, editor, world));
                 ui.menu_button("Edit", |ui| {
                     let mut act = None;
                     for (label, a) in [
@@ -349,6 +632,9 @@ impl EditorShell {
                         self.show_about = true;
                         ui.close_menu();
                     }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(self.scene_title());
                 });
             });
         });
@@ -397,7 +683,8 @@ impl EditorShell {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    let r = ui.add(egui::TextEdit::singleline(&mut pr.buffer).hint_text("path/to/level.ron").desired_width(320.0));
+                    let hint = if self.project_dir.is_some() { "name.scene.ron (relative to <project>/scenes)" } else { "path/to/level.ron" };
+                    let r = ui.add(egui::TextEdit::singleline(&mut pr.buffer).hint_text(hint).desired_width(320.0));
                     ui.horizontal(|ui| {
                         submit = ui.button(if pr.save { "Save" } else { "Open" }).clicked()
                             || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
@@ -407,14 +694,14 @@ impl EditorShell {
                     });
                 });
             if submit && !pr.buffer.trim().is_empty() {
-                let path = std::path::PathBuf::from(pr.buffer.trim());
-                if pr.save {
-                    self.save_scene(world, &path);
-                } else {
-                    self.open_scene(editor, world, &path);
-                }
+                self.run_path_prompt(editor, world, pr);
             } else if keep {
                 self.prompt = Some(pr);
+            }
+        }
+        if let Some(c) = self.confirm.clone() {
+            if let Some(choice) = draw_confirm(ctx, &c) {
+                self.resolve_confirm(editor, world, choice);
             }
         }
         if self.show_about {
@@ -462,6 +749,12 @@ impl EditorShell {
             self.applied_theme = Some(self.prefs.theme.clone());
         }
         editor.keymap = self.prefs.keymap;
+        self.sync(editor);
+        if editor.is_editing() {
+            if let Err(e) = self.scene_io.autosave_tick(world, &editor.registry, std::time::Instant::now()) {
+                self.console.warn(e);
+            }
+        }
         super::ui::handle_shortcuts(ctx, editor, world);
 
         self.menu_bar(ctx, editor, world);
@@ -488,6 +781,7 @@ impl EditorShell {
             self.apply_preset(p);
         }
         super::asset_tab::paint_drag_ghost(ctx);
+        self.scene_io.sync_undo_dirty(editor.undo.is_dirty());
         self.prefs.ui_scale
     }
 }
@@ -830,7 +1124,7 @@ mod tests {
         let mut editor = EditorState::new();
         let mut world = World::new();
         editor.spawn(&mut world, crate::editor::command::SpawnSpec::primitive(crate::editor::hierarchy::PrimitiveShape::Cube, None));
-        shell.save_scene(&world, &path);
+        assert!(shell.save_scene(&mut editor, &mut world, &path));
         shell.new_scene(&mut editor, &mut world);
         assert_eq!(world.len(), 0);
         shell.open_scene(&mut editor, &mut world, &path);
