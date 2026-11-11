@@ -44,6 +44,10 @@ pub trait ShellHost {
     fn selection_bounds(&mut self, world: &World, selection: &[Entity]) -> Option<(Vec3, Vec3)> {
         transform_bounds(world, selection)
     }
+    /// Called every frame after the dock is drawn, once the Viewport tab has a
+    /// rect (`viewport`, in egui points). For game overlays that belong on the
+    /// scene image (HUD, pause menu, dialogue choices): draw with `ctx`.
+    fn viewport_overlay(&mut self, _ctx: &egui::Context, _viewport: egui::Rect, _world: &mut World) {}
 }
 
 /// Fallback bounds: each entity is a unit box scaled by its `Transform`.

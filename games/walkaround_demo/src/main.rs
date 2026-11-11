@@ -42,6 +42,9 @@ use engine::sdl2::mouse::MouseButton;
 use engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
 use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
+use docked::PlayActions;
+
+mod docked;
 
 fn default_demo_profiles() -> Vec<ShaderProfile> {
     let make = |name: &str, render: RenderParams| ShaderProfile {
@@ -715,6 +718,7 @@ struct RigRoot {
 /// Tags an entity spawned from an `engine::class::ObjectClass` so
 /// "Apply to All Instances" can find every member of a class, and so
 /// `build_level_from_ecs` can write `LevelObject::class` back out.
+#[derive(Clone)]
 struct ClassMember {
     class_path: PathBuf,
 }
@@ -996,6 +1000,14 @@ struct Sandbox {
     net_reconnect_attempts_left: u32,
     /// Seconds until the next automatic reconnect attempt.
     net_reconnect_timer: f32,
+    /// F4 docked editor (`docked.rs`), created on first use; never created when
+    /// `!editor_available()`. `docked_on` is the mode flag (kept outside
+    /// `docked` because that is taken out of `self` while it runs).
+    docked: Option<docked::Docked>,
+    docked_on: bool,
+    /// Bumped by every `apply_level` (all entity ids change) so the docked
+    /// editor knows its selection and undo history are stale.
+    level_gen: u64,
 }
 
 /// Which side of a listen-server multiplayer session `Sandbox` is
@@ -1103,6 +1115,9 @@ impl Sandbox {
             remote_level_switch_permission: HashMap::new(),
             net_reconnect_attempts_left: 0,
             net_reconnect_timer: 0.0,
+            docked: None,
+            docked_on: false,
+            level_gen: 0,
             audio: match AudioContext::new() {
                 Ok(audio) => Some(audio),
                 Err(err) => {
@@ -2026,6 +2041,7 @@ impl Sandbox {
 
     fn apply_level(&mut self, gl: &glow::Context, level: &Level) -> anyhow::Result<()> {
         self.world.clear();
+        self.level_gen += 1;
         self.selected_entity = None;
         self.selected_rig = None;
         self.selected_rig_part = None;
@@ -4446,6 +4462,54 @@ impl Sandbox {
     }
 
     fn draw_level_editor_ui(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
+        self.track_undo_selection();
+        self.ui_level_section(ui, gl);
+
+        ui.separator();
+        ui.heading("Scene Objects");
+        self.ui_object_list(ui);
+
+        ui.separator();
+        self.ui_selected_object(ui, gl);
+
+        ui.separator();
+        ui.heading("Rigs");
+        self.ui_rig_create(ui, gl);
+        self.ui_rig_list(ui);
+
+        ui.separator();
+        self.ui_selected_rig(ui, gl);
+
+        ui.separator();
+        ui.heading("Characters");
+        self.ui_character_create(ui, gl);
+        self.ui_character_list(ui);
+
+        ui.separator();
+        self.ui_selected_character(ui, gl);
+
+        ui.separator();
+        ui.heading("Spawners");
+        self.ui_spawner_create(ui);
+        self.ui_spawner_list(ui);
+
+        ui.separator();
+        self.ui_selected_spawner(ui);
+
+        ui.separator();
+        ui.heading("Classes");
+        self.ui_class_create(ui, gl);
+
+        ui.separator();
+        self.ui_selected_class(ui, gl);
+
+        ui.separator();
+        ui.small("F2 toggle level editor \u{b7} F3 play/stop \u{b7} click an object below to select it");
+    }
+
+    /// Bundles a whole slider-drag editing session on one object into a
+    /// single undo step (see the body for the rule).
+    fn track_undo_selection(&mut self) {
         // Bundles a whole slider-drag editing session on one object into a
         // single undo step: the moment the selection changes to something
         // else, snapshot the state as it stood *before* that new object's
@@ -4455,7 +4519,9 @@ impl Sandbox {
             self.push_undo_snapshot();
             self.last_undo_selection = current_selection;
         }
+    }
 
+    fn ui_level_section(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         ui.heading("Level");
         ui.horizontal(|ui| {
             if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo (Ctrl+Z)")).clicked() {
@@ -4566,9 +4632,9 @@ impl Sandbox {
             let entity = self.spawn_level_particle_emitter(&emitter);
             self.selected_entity = Some(entity);
         }
+    }
 
-        ui.separator();
-        ui.heading("Scene Objects");
+    fn ui_object_list(&mut self, ui: &mut egui::Ui) {
         if self.selected_entities.len() > 1 {
             ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_entities.len()));
         }
@@ -4590,8 +4656,9 @@ impl Sandbox {
                 self.selected_entities.insert(entity);
             }
         }
+    }
 
-        ui.separator();
+    fn ui_selected_object(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if let Some(entity) = self.selected_entity {
             if self.world.contains(entity) {
                 self.draw_selected_object_ui(ui, gl, entity);
@@ -4601,9 +4668,9 @@ impl Sandbox {
         } else {
             ui.label("No object selected.");
         }
+    }
 
-        ui.separator();
-        ui.heading("Rigs");
+    fn ui_rig_create(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.rig_new_name);
             if ui.button("New Rig").clicked() {
@@ -4625,7 +4692,9 @@ impl Sandbox {
                 self.add_rig_instance(gl, i);
             }
         }
+    }
 
+    fn ui_rig_list(&mut self, ui: &mut egui::Ui) {
         let mut clicked_rig = None;
         for (entity, root) in self.world.query::<&RigRoot>().iter() {
             let selected = self.selected_rig == Some(entity);
@@ -4637,8 +4706,9 @@ impl Sandbox {
             self.selected_rig = Some(entity);
             self.selected_rig_part = None;
         }
+    }
 
-        ui.separator();
+    fn ui_selected_rig(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if let Some(root) = self.selected_rig {
             if self.world.contains(root) {
                 self.draw_selected_rig_ui(ui, gl, root);
@@ -4649,9 +4719,9 @@ impl Sandbox {
         } else {
             ui.label("No rig selected.");
         }
+    }
 
-        ui.separator();
-        ui.heading("Characters");
+    fn ui_character_create(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if ui.button("Add Character").clicked() {
             self.push_undo_snapshot();
             let count = self.world.query::<&CharacterMeta>().iter().count();
@@ -4676,6 +4746,9 @@ impl Sandbox {
                 Err(err) => log::error!("failed to add character: {err}"),
             }
         }
+    }
+
+    fn ui_character_list(&mut self, ui: &mut egui::Ui) {
         if self.selected_characters.len() > 1 {
             ui.small(format!("{} selected (Ctrl+click to multi-select, Ctrl+D to duplicate, Del to delete)", self.selected_characters.len()));
         }
@@ -4697,8 +4770,9 @@ impl Sandbox {
                 self.selected_characters.insert(entity);
             }
         }
+    }
 
-        ui.separator();
+    fn ui_selected_character(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if let Some(entity) = self.selected_character {
             if self.world.contains(entity) {
                 self.draw_selected_character_ui(ui, gl, entity);
@@ -4708,9 +4782,9 @@ impl Sandbox {
         } else {
             ui.label("No character selected.");
         }
+    }
 
-        ui.separator();
-        ui.heading("Spawners");
+    fn ui_spawner_create(&mut self, ui: &mut egui::Ui) {
         if ui.button("Add Spawner").clicked() {
             self.push_undo_snapshot();
             let count = self.world.query::<&SpawnerConfig>().iter().count();
@@ -4741,6 +4815,9 @@ impl Sandbox {
             let entity = self.spawn_spawner(&instance);
             self.selected_spawner = Some(entity);
         }
+    }
+
+    fn ui_spawner_list(&mut self, ui: &mut egui::Ui) {
         let mut clicked_spawner = None;
         for (entity, config) in self.world.query::<&SpawnerConfig>().iter() {
             let selected = self.selected_spawner == Some(entity);
@@ -4751,8 +4828,9 @@ impl Sandbox {
         if let Some(entity) = clicked_spawner {
             self.selected_spawner = Some(entity);
         }
+    }
 
-        ui.separator();
+    fn ui_selected_spawner(&mut self, ui: &mut egui::Ui) {
         if let Some(entity) = self.selected_spawner {
             if self.world.contains(entity) {
                 self.draw_selected_spawner_ui(ui, entity);
@@ -4762,9 +4840,9 @@ impl Sandbox {
         } else {
             ui.label("No spawner selected.");
         }
+    }
 
-        ui.separator();
-        ui.heading("Classes");
+    fn ui_class_create(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.class_new_name);
             if ui.button("New Class").clicked() {
@@ -4790,7 +4868,9 @@ impl Sandbox {
             self.spawn_object_from_class(gl, i);
         }
 
-        ui.separator();
+    }
+
+    fn ui_selected_class(&mut self, ui: &mut egui::Ui, gl: &glow::Context) {
         if let Some(index) = self.selected_class {
             if index < self.classes.len() {
                 self.draw_class_editor_ui(ui, gl, index);
@@ -4800,9 +4880,6 @@ impl Sandbox {
         } else {
             ui.label("No class selected.");
         }
-
-        ui.separator();
-        ui.small("F2 toggle level editor \u{b7} F3 play/stop \u{b7} click an object below to select it");
     }
 
     fn draw_selected_object_ui(&mut self, ui: &mut egui::Ui, gl: &glow::Context, entity: Entity) {
@@ -6513,6 +6590,198 @@ impl Sandbox {
 
     // --- Shader profile editor ---
 
+    /// Draws the world into the renderer's scene target at `size` pixels and
+    /// returns the draw-call count. Shared by the F1/F2/F3 path and the docked editor.
+    pub(crate) fn render_scene(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> anyhow::Result<u32> {
+        let params = self.render_params;
+
+        let renderer = self.renderer.as_mut().expect("renderer set up in init");
+        renderer.resize_if_needed(gl, size)?;
+        renderer.begin_scene(gl);
+
+        let shader_cache = self
+            .shader_cache
+            .as_mut()
+            .expect("shader cache set up in init");
+        let flags = if params.affine_texture_mapping {
+            AFFINE_UV_BIT
+        } else {
+            0
+        };
+        let program = shader_cache.get_or_compile(gl, flags)?;
+        let uniforms = MeshUniforms::resolve(gl, program);
+
+        unsafe {
+            gl.clear_color(params.fog_color[0], params.fog_color[1], params.fog_color[2], 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+
+        // Drawn first, depth-write disabled, so mesh geometry drawn after
+        // this always occludes it normally — see `SkyboxPass` for why no
+        // cubemap/dome mesh is needed.
+        let inv_view_proj = (proj * view).inverse();
+        renderer.draw_skybox(gl, inv_view_proj.to_cols_array(), params.sky_horizon_color, params.sky_zenith_color);
+
+        let mut draw_calls: u32 = 0;
+        unsafe {
+            // Scoped to just this opaque mesh loop — left untouched for the
+            // skybox (a single fullscreen triangle already drawn above) and
+            // for particle billboards (drawn after, via their own begin/end).
+            if params.backface_culling {
+                gl.enable(glow::CULL_FACE);
+                gl.cull_face(glow::BACK);
+            } else {
+                gl.disable(glow::CULL_FACE);
+            }
+
+            gl.use_program(Some(program));
+            gl.uniform_matrix_4_f32_slice(uniforms.view.as_ref(), false, &view.to_cols_array());
+            gl.uniform_matrix_4_f32_slice(uniforms.proj.as_ref(), false, &proj.to_cols_array());
+            let light_dir = Vec3::from(params.light_dir).normalize_or_zero();
+            gl.uniform_3_f32(
+                uniforms.light_dir.as_ref(),
+                light_dir.x,
+                light_dir.y,
+                light_dir.z,
+            );
+            gl.uniform_3_f32(
+                uniforms.ambient_color.as_ref(),
+                params.ambient_color[0],
+                params.ambient_color[1],
+                params.ambient_color[2],
+            );
+            gl.uniform_1_i32(
+                uniforms.lighting_mode.as_ref(),
+                match params.lighting_mode {
+                    LightingMode::Unlit => 0,
+                    LightingMode::VertexLit => 1,
+                },
+            );
+            gl.uniform_1_f32(uniforms.vertex_snap_amount.as_ref(), params.vertex_snap_amount);
+            gl.uniform_1_f32(uniforms.fog_start.as_ref(), params.fog_start);
+            gl.uniform_1_f32(uniforms.fog_end.as_ref(), params.fog_end);
+            gl.uniform_3_f32(
+                uniforms.fog_color.as_ref(),
+                params.fog_color[0],
+                params.fog_color[1],
+                params.fog_color[2],
+            );
+
+            let point_lights: Vec<(Vec3, Vec3, f32, f32)> = self
+                .world
+                .query::<(&Transform, &Light)>()
+                .iter()
+                // A `Static` light is baked into nearby geometry's vertex
+                // colors instead (see `bake_static_lighting`) — skip it here
+                // so it doesn't consume one of the 4 live dynamic-light
+                // slots that would otherwise go to an actually-moving light.
+                .filter(|(_entity, (_transform, light))| !light.is_static)
+                .filter_map(|(_entity, (transform, light))| match light.kind {
+                    LightKind::Point { range } => {
+                        Some((transform.position, light.color, light.intensity, range))
+                    }
+                    LightKind::Directional { .. } => None,
+                })
+                .take(MAX_POINT_LIGHTS)
+                .collect();
+
+            for (i, (position, color, intensity, range)) in point_lights.iter().enumerate() {
+                gl.uniform_3_f32(uniforms.point_light_pos[i].as_ref(), position.x, position.y, position.z);
+                gl.uniform_3_f32(uniforms.point_light_color[i].as_ref(), color.x, color.y, color.z);
+                gl.uniform_1_f32(uniforms.point_light_intensity[i].as_ref(), *intensity);
+                gl.uniform_1_f32(uniforms.point_light_range[i].as_ref(), *range);
+            }
+            gl.uniform_1_i32(uniforms.point_light_count.as_ref(), point_lights.len() as i32);
+
+            for (_entity, (transform, mesh_renderer)) in
+                self.world.query::<(&Transform, &MeshRenderer)>().iter()
+            {
+                gl.uniform_matrix_4_f32_slice(
+                    uniforms.model.as_ref(),
+                    false,
+                    &transform.matrix().to_cols_array(),
+                );
+
+                if let Some(texture) = &mesh_renderer.texture {
+                    texture.bind(gl, 0);
+                    gl.uniform_1_i32(uniforms.tex.as_ref(), 0);
+                }
+
+                mesh_renderer.mesh.draw(gl);
+                draw_calls += 1;
+            }
+
+            gl.disable(glow::CULL_FACE);
+        }
+
+        // Camera-facing (billboarded) particles, drawn after opaque meshes
+        // so they blend over the already-drawn scene. `view.inverse()`'s
+        // rotation is the camera's own world-space orientation — applying
+        // it to every particle's quad makes it face the viewer regardless
+        // of camera angle.
+        if self.particle_quad_mesh.is_none() {
+            self.particle_quad_mesh = Some(Arc::new(GpuMesh::upload(gl, &primitives::quad())?));
+        }
+        let quad_mesh = self.particle_quad_mesh.as_ref().unwrap().clone();
+        let (_, billboard_rotation, _) = view.inverse().to_scale_rotation_translation();
+        let mut particle_draws: Vec<(Arc<GpuMesh>, [f32; 16], [f32; 4])> = Vec::new();
+        for (_entity, (_transform, emitter)) in self.world.query::<(&Transform, &ParticleEmitter)>().iter() {
+            for particle in &emitter.particles {
+                let (size, color) = emitter.appearance(particle);
+                let model = Mat4::from_scale_rotation_translation(Vec3::splat(size), billboard_rotation, particle.position);
+                particle_draws.push((quad_mesh.clone(), model.to_cols_array(), color));
+            }
+        }
+        renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
+        Ok(draw_calls)
+    }
+
+    /// Applies the thumbnail the texture asset browser just returned to whoever opened it.
+    pub(crate) fn apply_picked_texture(&mut self, gl: &glow::Context, path: PathBuf) {
+        match self.pending_texture_pick.take() {
+            Some(PendingTexturePick::ForEntity(entity)) => {
+                match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
+                    Ok(texture) => {
+                        let texture = Arc::new(texture);
+                        if let Ok(mut query) =
+                            self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity)
+                        {
+                            if let Some((renderer, meta)) = query.get() {
+                                renderer.texture = Some(texture);
+                                meta.texture_path = Some(path.clone());
+                            }
+                        }
+                        log::info!("assigned texture {path:?} via asset browser");
+                    }
+                    Err(err) => log::error!("failed to load texture {path:?}: {err}"),
+                }
+            }
+            Some(PendingTexturePick::ForClass(index)) => {
+                if let Some(class) = self.classes.get_mut(index) {
+                    class.texture_path = Some(path);
+                }
+            }
+            Some(PendingTexturePick::ForCharacter(entity)) => {
+                match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
+                    Ok(texture) => {
+                        let texture = Arc::new(texture);
+                        if let Ok(mut query) =
+                            self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity)
+                        {
+                            if let Some((renderer, meta)) = query.get() {
+                                renderer.texture = Some(texture);
+                                meta.texture_path = Some(path.clone());
+                            }
+                        }
+                        log::info!("assigned character texture {path:?} via asset browser");
+                    }
+                    Err(err) => log::error!("failed to load texture {path:?}: {err}"),
+                }
+            }
+            None => {}
+        }
+    }
+
     fn draw_shader_editor_ui(&mut self, ui: &mut egui::Ui, gl: &glow::Context, drawable_size: (u32, u32)) {
         ui.heading("Shader Profiles");
         if let Some(cycler) = self.profiles.as_mut() {
@@ -6737,14 +7006,25 @@ impl Game for Sandbox {
                     None
                 }
             };
+            // Start straight in the docked editor (F4) when asked, like physics-sandbox's DUST_EDITOR.
+            if std::env::var_os("DUST_EDITOR").is_some() {
+                self.docked_toggle(ctx);
+            }
         }
 
         Ok(())
     }
 
     fn handle_event(&mut self, ctx: &mut Context, event: &Event) {
-        if let Some(ui) = self.ui.as_mut() {
-            ui.handle_event(event);
+        // F4 docked editor: consumes everything except gameplay keys while playing.
+        if self.docked_event(ctx, event) {
+            return;
+        }
+        let docked = self.docked_active();
+        if !docked {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.handle_event(event);
+            }
         }
         let ui_wants_pointer = self
             .ui
@@ -6757,7 +7037,7 @@ impl Game for Sandbox {
             .map(|ui| ui.wants_keyboard_input())
             .unwrap_or(false);
 
-        let editing = editor_available() && self.mode == EditorMode::Edit;
+        let editing = editor_available() && self.mode == EditorMode::Edit && !docked;
 
         match *event {
             Event::MouseMotion { xrel, yrel, .. }
@@ -6903,6 +7183,9 @@ impl Game for Sandbox {
 
     fn update(&mut self, ctx: &mut Context, dt: f32) -> anyhow::Result<()> {
         self.elapsed_time = ctx.time.elapsed;
+        if self.docked_on {
+            self.docked_update(ctx);
+        }
 
         // Drained before touching anything else in `self` — borrowing
         // `self.hot_reload` only for the duration of `poll_events` (which
@@ -6947,7 +7230,7 @@ impl Game for Sandbox {
             self.smooth_networked_transforms(dt);
         }
 
-        if self.mode == EditorMode::Edit {
+        if self.mode == EditorMode::Edit && !self.docked_on {
             let ui_wants_keyboard = self.ui.as_ref().map(|ui| ui.wants_keyboard_input()).unwrap_or(false);
             if !ui_wants_keyboard {
                 self.update_editor_camera_input(ctx, dt);
@@ -7179,6 +7462,9 @@ impl Game for Sandbox {
     }
 
     fn render(&mut self, ctx: &mut Context) -> anyhow::Result<()> {
+        if self.docked_active() {
+            return self.render_docked(ctx);
+        }
         let drawable_size = ctx.drawable_size();
         let aspect = ctx.aspect_ratio();
         let (view, proj) = match self.mode {
@@ -7188,147 +7474,10 @@ impl Game for Sandbox {
                 (self.fp_camera.view_matrix(eye), self.fp_camera.projection_matrix(aspect))
             }
         };
-        let params = self.render_params;
-
         let gl = ctx.gl();
+        let draw_calls = self.render_scene(gl, drawable_size, view, proj)?;
+        let params = self.render_params;
         let renderer = self.renderer.as_mut().expect("renderer set up in init");
-        renderer.resize_if_needed(gl, drawable_size)?;
-        renderer.begin_scene(gl);
-
-        let shader_cache = self
-            .shader_cache
-            .as_mut()
-            .expect("shader cache set up in init");
-        let flags = if params.affine_texture_mapping {
-            AFFINE_UV_BIT
-        } else {
-            0
-        };
-        let program = shader_cache.get_or_compile(gl, flags)?;
-        let uniforms = MeshUniforms::resolve(gl, program);
-
-        unsafe {
-            gl.clear_color(params.fog_color[0], params.fog_color[1], params.fog_color[2], 1.0);
-            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-        }
-
-        // Drawn first, depth-write disabled, so mesh geometry drawn after
-        // this always occludes it normally — see `SkyboxPass` for why no
-        // cubemap/dome mesh is needed.
-        let inv_view_proj = (proj * view).inverse();
-        renderer.draw_skybox(gl, inv_view_proj.to_cols_array(), params.sky_horizon_color, params.sky_zenith_color);
-
-        let mut draw_calls: u32 = 0;
-        unsafe {
-            // Scoped to just this opaque mesh loop — left untouched for the
-            // skybox (a single fullscreen triangle already drawn above) and
-            // for particle billboards (drawn after, via their own begin/end).
-            if params.backface_culling {
-                gl.enable(glow::CULL_FACE);
-                gl.cull_face(glow::BACK);
-            } else {
-                gl.disable(glow::CULL_FACE);
-            }
-
-            gl.use_program(Some(program));
-            gl.uniform_matrix_4_f32_slice(uniforms.view.as_ref(), false, &view.to_cols_array());
-            gl.uniform_matrix_4_f32_slice(uniforms.proj.as_ref(), false, &proj.to_cols_array());
-            let light_dir = Vec3::from(params.light_dir).normalize_or_zero();
-            gl.uniform_3_f32(
-                uniforms.light_dir.as_ref(),
-                light_dir.x,
-                light_dir.y,
-                light_dir.z,
-            );
-            gl.uniform_3_f32(
-                uniforms.ambient_color.as_ref(),
-                params.ambient_color[0],
-                params.ambient_color[1],
-                params.ambient_color[2],
-            );
-            gl.uniform_1_i32(
-                uniforms.lighting_mode.as_ref(),
-                match params.lighting_mode {
-                    LightingMode::Unlit => 0,
-                    LightingMode::VertexLit => 1,
-                },
-            );
-            gl.uniform_1_f32(uniforms.vertex_snap_amount.as_ref(), params.vertex_snap_amount);
-            gl.uniform_1_f32(uniforms.fog_start.as_ref(), params.fog_start);
-            gl.uniform_1_f32(uniforms.fog_end.as_ref(), params.fog_end);
-            gl.uniform_3_f32(
-                uniforms.fog_color.as_ref(),
-                params.fog_color[0],
-                params.fog_color[1],
-                params.fog_color[2],
-            );
-
-            let point_lights: Vec<(Vec3, Vec3, f32, f32)> = self
-                .world
-                .query::<(&Transform, &Light)>()
-                .iter()
-                // A `Static` light is baked into nearby geometry's vertex
-                // colors instead (see `bake_static_lighting`) — skip it here
-                // so it doesn't consume one of the 4 live dynamic-light
-                // slots that would otherwise go to an actually-moving light.
-                .filter(|(_entity, (_transform, light))| !light.is_static)
-                .filter_map(|(_entity, (transform, light))| match light.kind {
-                    LightKind::Point { range } => {
-                        Some((transform.position, light.color, light.intensity, range))
-                    }
-                    LightKind::Directional { .. } => None,
-                })
-                .take(MAX_POINT_LIGHTS)
-                .collect();
-
-            for (i, (position, color, intensity, range)) in point_lights.iter().enumerate() {
-                gl.uniform_3_f32(uniforms.point_light_pos[i].as_ref(), position.x, position.y, position.z);
-                gl.uniform_3_f32(uniforms.point_light_color[i].as_ref(), color.x, color.y, color.z);
-                gl.uniform_1_f32(uniforms.point_light_intensity[i].as_ref(), *intensity);
-                gl.uniform_1_f32(uniforms.point_light_range[i].as_ref(), *range);
-            }
-            gl.uniform_1_i32(uniforms.point_light_count.as_ref(), point_lights.len() as i32);
-
-            for (_entity, (transform, mesh_renderer)) in
-                self.world.query::<(&Transform, &MeshRenderer)>().iter()
-            {
-                gl.uniform_matrix_4_f32_slice(
-                    uniforms.model.as_ref(),
-                    false,
-                    &transform.matrix().to_cols_array(),
-                );
-
-                if let Some(texture) = &mesh_renderer.texture {
-                    texture.bind(gl, 0);
-                    gl.uniform_1_i32(uniforms.tex.as_ref(), 0);
-                }
-
-                mesh_renderer.mesh.draw(gl);
-                draw_calls += 1;
-            }
-
-            gl.disable(glow::CULL_FACE);
-        }
-
-        // Camera-facing (billboarded) particles, drawn after opaque meshes
-        // so they blend over the already-drawn scene. `view.inverse()`'s
-        // rotation is the camera's own world-space orientation — applying
-        // it to every particle's quad makes it face the viewer regardless
-        // of camera angle.
-        if self.particle_quad_mesh.is_none() {
-            self.particle_quad_mesh = Some(Arc::new(GpuMesh::upload(gl, &primitives::quad())?));
-        }
-        let quad_mesh = self.particle_quad_mesh.as_ref().unwrap().clone();
-        let (_, billboard_rotation, _) = view.inverse().to_scale_rotation_translation();
-        let mut particle_draws: Vec<(Arc<GpuMesh>, [f32; 16], [f32; 4])> = Vec::new();
-        for (_entity, (_transform, emitter)) in self.world.query::<(&Transform, &ParticleEmitter)>().iter() {
-            for particle in &emitter.particles {
-                let (size, color) = emitter.appearance(particle);
-                let model = Mat4::from_scale_rotation_translation(Vec3::splat(size), billboard_rotation, particle.position);
-                particle_draws.push((quad_mesh.clone(), model.to_cols_array(), color));
-            }
-        }
-        renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
 
         let (tint_color, tint_strength) = self.screen_effects.current();
         renderer.present(
@@ -7374,34 +7523,9 @@ impl Game for Sandbox {
         let ui_visible = self.ui_visible && editing;
         let level_ui_visible = self.level_ui_visible && editing;
         let playing = self.mode == EditorMode::Play;
-        let mut pause_menu_action: Option<PauseMenuAction> = None;
-        let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
-        let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
-        // Every currently-loaded rig, by name, for the appearance panel's
-        // picker list; the local player's own chosen appearance (if any),
-        // resolved to that same name for highlighting the current
-        // selection — see `find_rig_asset` for the path-to-name lookup.
-        let appearance_rig_names: Vec<String> = self.rigs.iter().map(|rig| rig.name.clone()).collect();
-        let current_appearance_name: Option<String> =
-            self.local_appearance.as_deref().and_then(|path| self.find_rig_asset(path)).map(|rig| rig.name.clone());
-        let net_status_text = self.net_status_text();
-        let net_connected = matches!(self.net_mode, NetMode::Host(_))
-            || matches!(&self.net_mode, NetMode::Client(client) if client.is_connected());
-        // Host-only roster for the multiplayer panel's player list — a
-        // client sees `&[]` (see `draw_multiplayer_panel`'s doc comment).
-        let net_players: Vec<(NetId, String, bool)> = if let NetMode::Host(host) = &self.net_mode {
-            host.connected_ids()
-                .into_iter()
-                .filter_map(|net_id| {
-                    host.player_name(net_id).map(|name| {
-                        let allowed = self.remote_level_switch_permission.get(&net_id).copied().unwrap_or(false);
-                        (net_id, name.to_string(), allowed)
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // Inputs for the pause menu's multiplayer/appearance panels (shared with the docked editor).
+        let pause_ui = self.pause_ui_inputs();
+        let mut play_actions = PlayActions::default();
         let mut picked_texture: Option<PathBuf> = None;
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if profiler_visible {
@@ -7449,21 +7573,7 @@ impl Game for Sandbox {
                 draw_hud(egui_ctx, &self.hud, &self.render_params.hud);
                 self.draw_dialogue_choices(egui_ctx);
                 if self.paused {
-                    pause_menu_action = draw_pause_menu(egui_ctx, editor_available());
-                    multiplayer_action = engine::ui::draw_multiplayer_panel(
-                        egui_ctx,
-                        &net_status_text,
-                        net_connected,
-                        self.net_reconnect_attempts_left > 0,
-                        &mut self.net_join_address,
-                        &mut self.net_player_name,
-                        &net_players,
-                    );
-                    appearance_action = engine::ui::draw_appearance_panel(
-                        egui_ctx,
-                        current_appearance_name.as_deref(),
-                        &appearance_rig_names,
-                    );
+                    self.draw_pause_overlays(egui_ctx, &pause_ui, &mut play_actions);
                 }
             }
         });
@@ -7471,75 +7581,17 @@ impl Game for Sandbox {
         self.ui = Some(ui_state);
 
         if let Some(path) = picked_texture {
-            match self.pending_texture_pick.take() {
-                Some(PendingTexturePick::ForEntity(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                Some(PendingTexturePick::ForClass(index)) => {
-                    if let Some(class) = self.classes.get_mut(index) {
-                        class.texture_path = Some(path);
-                    }
-                }
-                Some(PendingTexturePick::ForCharacter(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned character texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                None => {}
-            }
+            self.apply_picked_texture(gl, path);
         }
 
-        match pause_menu_action {
+        match play_actions.pause {
             Some(PauseMenuAction::Resume) => self.resume(ctx),
             Some(PauseMenuAction::ExitToEditor) => self.exit_play_mode(ctx),
             Some(PauseMenuAction::RestartLevel) => self.restart_level(ctx),
             Some(PauseMenuAction::QuitGame) => ctx.should_quit = true,
             None => {}
         }
-
-        match multiplayer_action {
-            Some(engine::ui::MultiplayerAction::Host) => self.start_hosting(),
-            Some(engine::ui::MultiplayerAction::Join) => self.join_game(),
-            Some(engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
-            Some(engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
-                self.set_level_switch_permission(net_id, allowed);
-            }
-            Some(engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
-            None => {}
-        }
-
-        match appearance_action {
-            Some(engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
-            Some(engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
-            Some(engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
-            None => {}
-        }
+        self.apply_net_actions(play_actions.multiplayer, play_actions.appearance);
 
         Ok(())
     }
