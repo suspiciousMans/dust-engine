@@ -2,6 +2,9 @@ mod framebuffer;
 mod grid;
 mod particles;
 mod post;
+mod shadow;
+mod shadow_math;
+mod shadow_shader;
 mod skybox;
 
 pub use framebuffer::OffscreenFramebuffer;
@@ -10,6 +13,14 @@ pub use particles::ParticlePass;
 pub use post::{
     CompositePass, PostParams, ScreenOverlay, TrailPass, DEFAULT_FRAGMENT_SRC, VIGNETTE_RINGS,
 };
+pub use shadow::ShadowPass;
+pub use shadow_math::{
+    aabb_corners, const_bias_depth, fit_directional, frustum_corners, is_lit, light_basis,
+    normal_offset_world, ortho_from_aabb, project_to_shadow, quantize_texel_size,
+    slope_bias_depth, slope_scaled_bias, FitOptions, LightFit, ShadowBounds, ShadowFilter,
+    ShadowSettings,
+};
+pub use shadow_shader::{patch_mesh_shaders, SHADOW_DEPTH_FRAG, SHADOW_DEPTH_VERT};
 pub use skybox::SkyboxPass;
 
 use glow::HasContext;
@@ -34,7 +45,16 @@ pub struct Renderer {
     /// Ping-pong targets for tracers (created on first use).
     trail_targets: Vec<OffscreenFramebuffer>,
     trail_index: usize,
+    /// Opt-in directional shadow map (see `set_shadow_settings`). `None`
+    /// unless the game enabled shadows, so the default path allocates nothing.
+    shadow: Option<ShadowPass>,
+    shadow_settings: ShadowSettings,
+    /// True between `begin_shadow_pass` and `end_shadow_pass`.
+    shadow_open: bool,
 }
+
+/// Texture unit the shadow map is bound to by `Renderer::bind_shadows`.
+pub const SHADOW_TEXTURE_UNIT: u32 = 7;
 
 fn scaled_size((w, h): (u32, u32), scale: f32) -> (u32, u32) {
     (
@@ -63,7 +83,100 @@ impl Renderer {
             trail: None,
             trail_targets: Vec::new(),
             trail_index: 0,
+            shadow: None,
+            shadow_settings: ShadowSettings::default(),
+            shadow_open: false,
         })
+    }
+
+    /// Applies shadow settings. Disabled (the default) frees the shadow map;
+    /// enabled (re)creates it when the resolution changed. A GL failure is
+    /// logged and leaves shadows off. Cheap when nothing changed.
+    pub fn set_shadow_settings(&mut self, gl: &glow::Context, mut settings: ShadowSettings) {
+        settings.resolution = settings.clamped_resolution();
+        if !settings.enabled {
+            self.free_shadow(gl);
+        } else if self.shadow.as_ref().map(|p| p.size()) != Some(settings.resolution) {
+            self.free_shadow(gl);
+            match ShadowPass::new(gl, settings.resolution) {
+                Ok(p) => self.shadow = Some(p),
+                Err(e) => {
+                    log::error!("shadows disabled: {e}");
+                    settings.enabled = false;
+                }
+            }
+        }
+        self.shadow_settings = settings;
+    }
+
+    pub fn shadow_settings(&self) -> &ShadowSettings {
+        &self.shadow_settings
+    }
+
+    /// True when shadows are enabled and the GL resources exist.
+    pub fn shadows_active(&self) -> bool {
+        self.shadow_settings.enabled && self.shadow.is_some()
+    }
+
+    fn free_shadow(&mut self, gl: &glow::Context) {
+        if let Some(p) = self.shadow.take() {
+            unsafe { p.destroy(gl) };
+        }
+        self.shadow_open = false;
+    }
+
+    /// Starts the shadow-map pass for a directional light. `light_dir` points
+    /// *toward* the light. Returns `false` (nothing to draw, skip casters and
+    /// `end_shadow_pass`) when shadows are off or the bounds are degenerate.
+    ///
+    /// Call before `begin_scene`; draw casters with `shadow_draw`, then
+    /// `end_shadow_pass`.
+    pub fn begin_shadow_pass(
+        &mut self,
+        gl: &glow::Context,
+        light_dir: glam::Vec3,
+        bounds: &ShadowBounds,
+    ) -> bool {
+        if !self.shadow_settings.enabled {
+            return false;
+        }
+        let settings = self.shadow_settings;
+        let Some(pass) = self.shadow.as_mut() else { return false };
+        self.shadow_open = pass.begin(gl, light_dir, bounds, &settings);
+        self.shadow_open
+    }
+
+    /// Draws one caster into the open shadow pass. No-op outside a pass.
+    pub fn shadow_draw(&self, gl: &glow::Context, model: &glam::Mat4, mesh: &GpuMesh) {
+        if let (true, Some(p)) = (self.shadow_open, self.shadow.as_ref()) {
+            p.draw_mesh(gl, model, mesh);
+        }
+    }
+
+    /// Ends the shadow pass: binds the default framebuffer and restores the
+    /// viewport/cull state. Follow with `begin_scene`.
+    pub fn end_shadow_pass(&mut self, gl: &glow::Context) {
+        if self.shadow_open {
+            if let Some(p) = self.shadow.as_ref() {
+                p.end(gl);
+            }
+            self.shadow_open = false;
+        }
+    }
+
+    /// Uploads the shadow uniforms and binds the map (texture unit
+    /// `SHADOW_TEXTURE_UNIT`) for `program`, which must be linked from
+    /// `patch_mesh_shaders` output. Makes `program` current. When shadows are
+    /// off or no pass ran this frame it sets `uShadowStrength = 0` instead.
+    pub fn bind_shadows(&self, gl: &glow::Context, program: glow::Program) {
+        match (&self.shadow, self.shadow_settings.enabled) {
+            (Some(p), true) => p.bind(gl, program, &self.shadow_settings, SHADOW_TEXTURE_UNIT),
+            _ => unsafe {
+                gl.use_program(Some(program));
+                let loc = gl.get_uniform_location(program, "uShadowStrength");
+                gl.uniform_1_f32(loc.as_ref(), 0.0);
+            },
+        }
     }
 
     /// Draws the sky gradient — call right after `begin_scene`, before any

@@ -1,4 +1,5 @@
 use crate::hud::HudStyle;
+use crate::renderer::ShadowFilter;
 use crate::profile::{LightingMode, RenderParams, TextureFilterMode};
 
 /// Draws sliders/checkboxes/dropdowns for every `RenderParams` field. Returns
@@ -104,6 +105,38 @@ pub fn render_params_editor(ui: &mut egui::Ui, params: &mut RenderParams) -> boo
                 )
                 .changed();
         });
+
+    ui.separator();
+    ui.heading("Shadows");
+    let sh = &mut params.shadows;
+    changed |= ui
+        .checkbox(&mut sh.enabled, "Enable shadows")
+        .on_hover_text("Needs a game that wires Renderer::set_shadow_settings and shadow-patched shaders")
+        .changed();
+    if sh.enabled {
+        let mut res = sh.resolution as f32;
+        if ui.add(egui::Slider::new(&mut res, 64.0..=4096.0).logarithmic(true).text("Map size")).changed() {
+            sh.resolution = (res.round() as u32).next_power_of_two().clamp(64, 4096);
+            changed = true;
+        }
+        egui::ComboBox::from_label("Edge filter")
+            .selected_text(format!("{:?}", sh.filter))
+            .show_ui(ui, |ui| {
+                for (f, n) in [
+                    (ShadowFilter::Pcf, "PCF (soft)"),
+                    (ShadowFilter::Hard, "Hard"),
+                    (ShadowFilter::Dithered, "Dithered (PS2)"),
+                ] {
+                    changed |= ui.selectable_value(&mut sh.filter, f, n).changed();
+                }
+            });
+        changed |= ui.add(egui::Slider::new(&mut sh.strength, 0.0..=1.0).text("Shadow strength")).changed();
+        changed |= ui.add(egui::Slider::new(&mut sh.softness, 0.0..=2.0).text("Softness (texels)")).changed();
+        changed |= ui.add(egui::Slider::new(&mut sh.bias, 0.0..=4.0).text("Bias (texels)")).changed();
+        changed |= ui.add(egui::Slider::new(&mut sh.normal_bias, 0.0..=4.0).text("Normal bias (texels)")).changed();
+        changed |= ui.add(egui::Slider::new(&mut sh.max_distance, 5.0..=200.0).text("Max distance")).changed();
+        changed |= ui.checkbox(&mut sh.texel_snap, "Texel snapping").changed();
+    }
 
     changed
 }

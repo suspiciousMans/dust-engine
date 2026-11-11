@@ -67,6 +67,11 @@ pub struct RenderParams {
     /// they always had (the defaults match the old hardcoded values).
     #[serde(default)]
     pub hud: HudStyle,
+    /// Opt-in directional shadow map (off by default). Only takes effect in
+    /// a game that wires `Renderer::set_shadow_settings` to it and links
+    /// shadow-patched mesh shaders; see GUIDE.md "Shadows".
+    #[serde(default)]
+    pub shadows: crate::renderer::ShadowSettings,
 }
 
 fn default_light_dir() -> [f32; 3] {
@@ -93,6 +98,7 @@ impl Default for RenderParams {
             sky_zenith_color: [0.1, 0.2, 0.45],
             backface_culling: true,
             hud: HudStyle::default(),
+            shadows: Default::default(),
         }
     }
 }
