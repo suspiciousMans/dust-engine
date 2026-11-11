@@ -7,11 +7,11 @@ Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
 
 | Issue | Owner | Notes |
 |---|---|---|
-| No system scheduling or typed resources; games hand-order calls in `update` | Stage 1 / P3 | |
-| No tunables (RON + hot reload) or telemetry hook | Stage 1 / P5 | |
-| Audio has no buses and no backend trait | Stage 1 / P2 | |
-| No effect primitives (`Lifetime`, `Fade`, `TextureOverride`) | Stage 1 / P1 | |
 | Engine forked from Dreamscape (40 files differ at audit time) | Stage 1 / P0 | `docs/fork-audit.md`; confirm the reconcile actually landed |
+| Phases 1-3 and 5 exist in the engine (effects, audio tracks, Schedule/Resources, Tunables/Telemetry) but no game uses them yet; the Dreamscape ports (plan tasks 1.4, 2.4, 3.4, 5.2, 5.3) are open | Stage 1 | Dreamscape is not in this repo |
+| Fade alpha is stored on `Fade` only; `MeshRenderer` has no tint/alpha so the renderer ignores it | Stage 1 / P1 | |
+| Games must call `audio.update()` each frame for track fades to advance | Stage 1 / P2 | web audio path type-checked only, never built |
+| `physics::sim::tests::five_hundred_body_benchmark` asserts <50 ms/step in debug and fails under heavy machine load | Stage 0 | flaky, not a logic bug |
 | Skeletal/skinned animation missing (segmented rigs only) | Stage 5 | |
 | Physics ray/sweep queries and joints: check coverage after the physics rewrite | Stage 5 | |
 | `new_game` scaffolding and packaging are PowerShell only | Stage 5 | `new_game.ps1`, `package.ps1` |
