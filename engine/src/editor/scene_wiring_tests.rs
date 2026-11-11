@@ -259,14 +259,58 @@ fn unsaved_changes_prompt_on_new_open_and_quit() {
 
 #[test]
 fn untitled_scene_save_prompt_continues_the_pending_action() {
+    let dir = TempDir::new("untitled");
     let mut f = Fixture::new();
     f.spawn_cmd();
     f.shell.request_new_scene(&mut f.editor, &mut f.world);
-    // No path: choosing Save has to ask for one instead of dropping the action.
+    // No path yet: choosing Save has to ask for one instead of dropping the action.
     f.shell.resolve_confirm(&mut f.editor, &mut f.world, Choice::Primary);
     assert!(f.shell.pending_confirm().is_none());
-    assert_eq!(f.world.len(), 1, "nothing happened yet; the path prompt is up");
+    assert!(matches!(f.shell.pending_path_prompt(), Some((true, _))));
+    assert_eq!(f.world.len(), 1, "the new-scene action waits for the save");
     assert!(f.shell.is_scene_dirty());
+
+    let path = dir.path().join("first.scene.ron");
+    f.shell.submit_path_prompt(&mut f.editor, &mut f.world, &path.display().to_string());
+    assert!(path.exists(), "saved");
+    assert_eq!(f.world.len(), 0, "then the pending New ran");
+    assert!(!f.shell.is_scene_dirty());
+    assert!(f.shell.pending_path_prompt().is_none());
+}
+
+#[test]
+fn relative_prompt_paths_resolve_inside_the_project_scenes_folder() {
+    let dir = TempDir::new("relpath");
+    let mut f = Fixture::new();
+    f.shell.set_project_dir(Some(dir.path().to_path_buf()));
+    f.spawn_cmd();
+    f.shell.save_current(&mut f.editor, &mut f.world);
+    assert_eq!(f.shell.pending_path_prompt(), Some((true, "untitled.scene.ron")));
+    f.shell.submit_path_prompt(&mut f.editor, &mut f.world, "levels/one.scene.ron");
+    assert!(dir.path().join("scenes/levels/one.scene.ron").exists());
+}
+
+#[test]
+fn revert_discards_changes_after_confirmation() {
+    let dir = TempDir::new("revert");
+    let path = dir.path().join("r.scene.ron");
+    let mut f = Fixture::new();
+    f.spawn_cmd();
+    assert!(f.shell.save_scene(&mut f.editor, &mut f.world, &path));
+    f.spawn_cmd();
+    f.frame();
+    f.shell.request_revert(&mut f.editor, &mut f.world);
+    assert_eq!(f.shell.pending_confirm(), Some(&Confirm::Revert));
+    f.shell.resolve_confirm(&mut f.editor, &mut f.world, Choice::Cancel);
+    assert_eq!(f.world.len(), 2);
+    f.shell.request_revert(&mut f.editor, &mut f.world);
+    f.shell.resolve_confirm(&mut f.editor, &mut f.world, Choice::Primary);
+    assert_eq!(f.world.len(), 1);
+    assert!(!f.shell.is_scene_dirty());
+    assert!(!f.editor.undo.can_undo(), "history cleared");
+    // clean -> reverts without asking
+    f.shell.request_revert(&mut f.editor, &mut f.world);
+    assert!(f.shell.pending_confirm().is_none());
 }
 
 // ------------------------------------------------------------------ autosave

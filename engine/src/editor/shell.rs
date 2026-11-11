@@ -509,6 +509,30 @@ impl EditorShell {
         }
     }
 
+    /// `(is_save, text)` of the File > Open / Save As path prompt, if shown.
+    pub fn pending_path_prompt(&self) -> Option<(bool, &str)> {
+        self.prompt.as_ref().map(|p| (p.save, p.buffer.as_str()))
+    }
+
+    /// Answers the path prompt with `typed` (what pressing Open / Save does).
+    pub fn submit_path_prompt(&mut self, editor: &mut EditorState, world: &mut World, typed: &str) {
+        if let Some(mut pr) = self.prompt.take() {
+            pr.buffer = typed.to_string();
+            if !typed.trim().is_empty() {
+                self.run_path_prompt(editor, world, pr);
+            }
+        }
+    }
+
+    fn run_path_prompt(&mut self, editor: &mut EditorState, world: &mut World, mut pr: PathPrompt) {
+        let path = resolve_scene_path(self.project_dir.as_deref(), &pr.buffer);
+        if pr.save {
+            self.save_then(editor, world, path, pr.then.take());
+        } else {
+            self.request_open_scene(editor, world, &path);
+        }
+    }
+
     /// File menu contents (also drawn headless in tests).
     pub fn file_menu(&mut self, ui: &mut egui::Ui, editor: &mut EditorState, world: &mut World) {
         let editing = editor.is_editing();
@@ -650,12 +674,7 @@ impl EditorShell {
                     });
                 });
             if submit && !pr.buffer.trim().is_empty() {
-                let path = resolve_scene_path(self.project_dir.as_deref(), &pr.buffer);
-                if pr.save {
-                    self.save_then(editor, world, path, pr.then.take());
-                } else {
-                    self.request_open_scene(editor, world, &path);
-                }
+                self.run_path_prompt(editor, world, pr);
             } else if keep {
                 self.prompt = Some(pr);
             }

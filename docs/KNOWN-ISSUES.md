@@ -1,7 +1,7 @@
 # Known issues
 
 Each item names the plan stage that owns it (see `docs/ROADMAP.md`).
-Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
+Updated 2026-11-11 after wiring scene/prefab I/O into the shell.
 
 ## Engine
 
@@ -23,7 +23,9 @@ Updated 2026-11-10 after merging shell, gizmos, scenes and physics.
 | Issue | Owner | Notes |
 |---|---|---|
 | Docked editor (F4) is hosted in all four games, but the legacy F1/F2 editor is still in `sandbox`, `walkaround_demo`, `mushroom_man` (main.rs still ~7.7-8k lines each); two undo stacks; rig instances not editable by gizmo; HUD anchors to window not viewport; mouse picking and gizmo drag never hand-tested | Stage 2.2 / 3 | retire F2 to shrink main.rs |
-| File menu uses `LevelSceneIo` (primitives only), not the RON `Scene`/prefab path | Stage 3.8 | `editor/scene.rs`, `prefab.rs` are not wired to the shell |
+| File menu: `RonSceneIo` (editor/ron_scene_io.rs) is the shell default: New/Open/Save/Save As/Revert, `*` dirty marker from the undo stack (`shell.scene_title()` / `window_title()`), unsaved-changes / autosave-recovery / legacy-level-overwrite prompts, `<scene>.autosave`. The four games still replace it with `DisabledSceneIo` (their levels live in the Level tab), and none calls `request_quit` / reads `ShellEvent::QuitApproved` or `window_title` yet | Stage 3.8 | wiring a game = drop the `DisabledSceneIo` line and call `set_project_dir` |
+| Prefab UX is wired (Create Prefab from Selection, Instantiate Prefab picker, hierarchy ◆/◇ markers, inspector Apply / Revert All / Unpack, per-field override marker + Revert field, all undoable via `PrefabOpCommand`) but only with a project dir (`<dir>/prefabs`); without one the entries are disabled. Opening a scene does not re-propagate prefab edits made since it was saved; Apply/Create undo restores the prefab file but not other tooling's changes to it; components outside the inspector `Registry` are not part of the undo snapshot | Stage 3.8 | `EditorRuntime::new` registers the scene components; `EditorState::new()` alone (no `scene_registry()`) loses `PrefabInstance` on undo |
+| Legacy `level::Level` files open through `level_compat` (non-primitive data kept as raw payload) and are written back only in the Scene format after a confirmation; there is no "Save as Level" menu entry (`level_compat::save_as_level` exists) | Stage 3.8 | |
 | Asset browser exists (`ui/asset_browser.rs`) but is not a shell tab | Stage 3.7 | |
 | UI designer exists (`ui_designer/`) but has no shell tab | Stage 4.2 | |
 | Click-through of select / gizmo / undo / Play / Stop has only been unit tested and smoke-tested via F3/F4 scripts, not driven by hand | Stage 3 | |
