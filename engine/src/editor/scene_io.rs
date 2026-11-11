@@ -7,12 +7,15 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use glam::{EulerRot, Vec3};
 use hecs::{BuiltEntityClone, Entity, World};
 
 use super::hierarchy::{Name, Primitive, PrimitiveShape};
 use super::inspector::Registry;
+use super::prefab::SharedLibrary;
+use super::scene::Recovery;
 use crate::ecs::{euler_deg_to_quat, Transform};
 use crate::level::{self, Level, LevelObject, MeshSource, PrimitiveKind};
 
@@ -112,6 +115,68 @@ pub trait SceneIo {
     fn save(&mut self, world: &World, path: &Path) -> Result<(), String>;
     /// File the scene was last opened from / saved to.
     fn current_path(&self) -> Option<&Path>;
+
+    // ---- registry-aware API
+    //
+    // Everything below has a default that delegates to the four methods
+    // above (or does nothing), so existing implementations keep working. The
+    // shell only calls these; richer backends ([`super::ron_scene_io::RonSceneIo`])
+    // override them because they need the editor `Registry` and a mutable
+    // world (saving assigns persistent entity ids).
+
+    fn new_scene_with(&mut self, world: &mut World, _registry: &Registry) -> Result<(), String> {
+        self.new_scene(world)
+    }
+    fn open_with(&mut self, path: &Path, world: &mut World, _registry: &Registry) -> Result<(), String> {
+        self.open(path, world)
+    }
+    fn save_with(&mut self, world: &mut World, _registry: &Registry, path: &Path) -> Result<(), String> {
+        self.save(world, path)
+    }
+    /// Reloads the current file, dropping unsaved changes.
+    fn revert_with(&mut self, world: &mut World, registry: &Registry) -> Result<(), String> {
+        let path = self.current_path().map(Path::to_path_buf).ok_or_else(|| "scene has no file to revert to".to_string())?;
+        self.open_with(&path, world, registry)
+    }
+    /// Unsaved changes? Backends that don't track this report `false`.
+    fn is_dirty(&self) -> bool {
+        false
+    }
+    /// The shell reports whether the undo stack differs from its last saved
+    /// state (`UndoStack::is_dirty`) once per frame and around file operations.
+    fn sync_undo_dirty(&mut self, _undo_dirty: bool) {}
+    /// Display name of the open scene, `*`-suffixed when dirty.
+    fn title(&self) -> String {
+        let name = self.current_path().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+        format!("{}{}", name.unwrap_or_else(|| "untitled".into()), if self.is_dirty() { "*" } else { "" })
+    }
+    /// `Some(message)` if saving to `path` needs the user's confirmation first
+    /// (e.g. converting a legacy level file to the scene format).
+    fn save_confirmation(&self, _path: &Path) -> Option<String> {
+        None
+    }
+    /// An autosave newer than the scene at `path`, if a crash left one.
+    fn recovery_for(&self, _path: &Path) -> Option<Recovery> {
+        None
+    }
+    /// Opens the autosave of `path` instead of the file; the scene stays dirty.
+    fn open_recovery_with(&mut self, _path: &Path, _world: &mut World, _registry: &Registry) -> Result<(), String> {
+        Err("this scene backend has no autosave recovery".into())
+    }
+    fn discard_autosave(&mut self, _path: &Path) {}
+    /// Called every frame in Edit mode; writes the autosave when due.
+    /// `Ok(true)` if it wrote one.
+    fn autosave_tick(&mut self, _world: &mut World, _registry: &Registry, _now: Instant) -> Result<bool, String> {
+        Ok(false)
+    }
+    /// The editor is closing for good: remove the autosave.
+    fn close_clean(&mut self) {}
+    /// Prefab library used to refresh instance overrides before saving.
+    fn set_prefab_library(&mut self, _lib: Option<SharedLibrary>) {}
+    /// Warnings produced by the last operation (unknown components, ...).
+    fn take_messages(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Refuses every operation with `reason` — for hosts that manage scenes
