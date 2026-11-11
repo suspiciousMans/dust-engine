@@ -1,17 +1,23 @@
-//! F4 docked editor: the engine's `EditorRuntime` hosted next to the original
-//! F1/F2/F3/F5 dev editor, which is left exactly as it was.
+//! The docked editor: the engine's `EditorRuntime`, and the game's only editor.
+//! F1, F2, F4 (and `DUST_EDITOR=1` at startup) open it in debug builds; F4
+//! closes it again. Release builds never create it.
 //!
 //! What the shell does here: viewport tab (the game's own scene, post-FX
 //! included), editor camera in Edit/Pause, click/box selection, move/rotate/
-//! scale gizmos, hierarchy, inspector, shell undo/redo and Ctrl+D/Del.
+//! scale gizmos, hierarchy, inspector, shell undo/redo and Ctrl+D/Del, the
+//! Assets tab (rooted at the game's asset dir; a dropped image textures the
+//! object under the cursor, a dropped level `.ron` loads it), the UI designer
+//! (`<asset root>/ui`) and the File menu over `levels/*.ron` ([`GameSceneIo`]).
 //!
 //! What stays game-side:
 //! * Play/Stop. The shell's registry snapshot only knows registered
 //!   components, so it is replaced by `NullSnapshot` and Play/Stop drive the
 //!   game's own `enter_play_mode`/`exit_play_mode` (a full `Level` snapshot,
 //!   which also covers rigs, characters and spawners).
-//! * The F2 panels (`Level (F2)` host tab), the F1 render panel
-//!   (`Render (F1)`), and the multiplayer/appearance windows.
+//! * The game panels: `Level (F2)` (rigs, classes, characters, spawners,
+//!   emitters, music, textures, scripts; its own level-snapshot undo, labelled
+//!   in the tab), `Render (F1)` (shader profiles, render params, physics,
+//!   camera feel) and `Multiplayer` (plus the appearance window).
 //!
 //! Bridge: level objects are hecs entities with `Transform`, so the shell can
 //! pick them. [`bridge_world`] adds the missing editor components
@@ -25,12 +31,14 @@
 use engine::editor::bounds::{Aabb, LocalBounds};
 use engine::editor::hierarchy::{Primitive, PrimitiveShape};
 use engine::editor::runtime::EditorRuntime;
-use engine::editor::scene_io::{DisabledSceneIo, NullSnapshot};
+use engine::editor::scene_io::{NullSnapshot, SceneIo};
 use engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
 use engine::editor::state::EditorMode as ShellMode;
 use engine::editor::{Locked, Name, Registry};
 use engine::glam::EulerRot;
 use engine::ui::EditorTab;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use super::*;
 
@@ -59,6 +67,108 @@ pub struct DockedState {
     drawable: (u32, u32),
     picked_texture: Option<PathBuf>,
     net_actions: (Option<engine::ui::MultiplayerAction>, Option<engine::ui::AppearanceAction>),
+    /// File-menu requests from [`GameSceneIo`], applied after the UI pass.
+    scene: Rc<RefCell<SceneBridge>>,
+    /// Window close while the editor is open: ask the shell first (unsaved
+    /// changes prompt) instead of quitting at once.
+    quit_requested: bool,
+}
+
+// ------------------------------------------------------------ File menu
+
+enum SceneOp {
+    New,
+    Open { level: Level, path: PathBuf },
+    Save(PathBuf),
+}
+
+/// State shared between [`GameSceneIo`] (boxed inside the shell, inside the
+/// runtime that is taken out of `Sandbox` while the UI runs) and the game.
+#[derive(Default)]
+struct SceneBridge {
+    ops: Vec<SceneOp>,
+    /// File of the open level; `None` for a new or never-saved one.
+    current: Option<PathBuf>,
+    /// Level name `current` was derived from (re-derived when it changes,
+    /// e.g. after the Level tab's Load list switched levels).
+    named: Option<String>,
+}
+
+/// File > New/Open/Save/Save As/Revert over `levels/*.ron`, using the game's
+/// own `Level` format. Opening and saving need the game (GPU, rigs, music...),
+/// so they are queued here and run by [`Sandbox::docked_scene_ops`] right
+/// after the UI pass; parse errors and unwritable paths are still reported
+/// by the shell immediately.
+struct GameSceneIo {
+    levels_dir: PathBuf,
+    shared: Rc<RefCell<SceneBridge>>,
+    path: Option<PathBuf>,
+    undo_dirty: bool,
+}
+
+impl GameSceneIo {
+    /// A bare name or relative path means a file in `levels/`; `.ron` is added.
+    fn resolve(&self, path: &Path) -> PathBuf {
+        let mut p = if path.is_absolute() || path.starts_with(&self.levels_dir) {
+            path.to_path_buf()
+        } else {
+            self.levels_dir.join(path)
+        };
+        if p.extension().is_none() {
+            p.set_extension("ron");
+        }
+        p
+    }
+}
+
+impl SceneIo for GameSceneIo {
+    fn new_scene(&mut self, _: &mut World) -> Result<(), String> {
+        let mut shared = self.shared.borrow_mut();
+        shared.ops.push(SceneOp::New);
+        shared.current = None;
+        shared.named = Some("untitled".into());
+        self.path = None;
+        Ok(())
+    }
+
+    fn open(&mut self, path: &Path, _: &mut World) -> Result<(), String> {
+        let path = self.resolve(path);
+        let level = engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        let mut shared = self.shared.borrow_mut();
+        shared.named = Some(level.name.clone());
+        shared.current = Some(path.clone());
+        shared.ops.push(SceneOp::Open { level, path: path.clone() });
+        self.path = Some(path);
+        Ok(())
+    }
+
+    fn save(&mut self, _: &World, path: &Path) -> Result<(), String> {
+        let path = self.resolve(path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("save {}: {e}", path.display()))?;
+        }
+        let mut shared = self.shared.borrow_mut();
+        shared.ops.push(SceneOp::Save(path.clone()));
+        shared.current = Some(path.clone());
+        shared.named = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+        self.path = Some(path);
+        Ok(())
+    }
+
+    fn current_path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.undo_dirty
+    }
+
+    /// Called by the shell every frame: also where the game's idea of the
+    /// open file (set by the Level tab's Load list) is picked up.
+    fn sync_undo_dirty(&mut self, undo_dirty: bool) {
+        self.undo_dirty = undo_dirty;
+        self.path = self.shared.borrow().current.clone();
+    }
 }
 
 // ------------------------------------------------------------------ bridge
@@ -359,7 +469,16 @@ impl Sandbox {
         let tabs = vec![LEVEL_TAB.to_string(), RENDER_TAB.to_string(), NET_TAB.to_string()];
         let mut rt = EditorRuntime::new(ctx.gl_arc(), editor_registry(), Some(self.asset_root.join(".editor")), tabs)?;
         rt.shell.snapshot = Box::new(NullSnapshot);
-        rt.shell.scene_io = Box::new(DisabledSceneIo(format!("scene files are managed by the {LEVEL_TAB} tab")));
+        rt.shell.scene_io = Box::new(GameSceneIo {
+            levels_dir: self.levels_dir.clone(),
+            shared: self.docked.scene.clone(),
+            path: None,
+            undo_dirty: false,
+        });
+        // Assets tab: the game's asset dir, so a path relative to it is what
+        // `LevelObjectMeta::texture_path` and the level files already use.
+        rt.set_asset_root(Some(self.asset_root.clone()));
+        rt.set_ui_dir(Some(self.asset_root.join("ui")));
         self.docked.rt = Some(rt);
         // Same switch the physics sandbox uses: start with the editor open.
         if std::env::var_os("DUST_EDITOR").is_some() {
@@ -378,6 +497,18 @@ impl Sandbox {
         ctx.platform.sdl.mouse().set_relative_mouse_mode(want);
     }
 
+    /// The scene seen through the (idle) editor camera, for the closed editor
+    /// in Edit mode.
+    pub(crate) fn docked_closed_view(&self, aspect: f32) -> (Mat4, Mat4) {
+        match self.docked.rt.as_ref() {
+            Some(rt) => (rt.shell.camera.view_matrix(), rt.shell.camera.projection_matrix(aspect)),
+            None => {
+                let camera = engine::editor::camera::EditorCamera::default();
+                (camera.view_matrix(), camera.projection_matrix(aspect))
+            }
+        }
+    }
+
     fn set_docked_open(&mut self, ctx: &mut Context, open: bool) {
         if open == self.docked.open {
             return;
@@ -385,6 +516,7 @@ impl Sandbox {
         let Some(rt) = self.docked.rt.as_mut() else { return };
         self.docked.open = open;
         rt.open = open;
+        log::info!("docked editor {}", if open { "opened" } else { "closed" });
         self.docked.captured = false;
         if open {
             rt.state.mode = match (self.mode, self.paused) {
@@ -412,12 +544,28 @@ impl Sandbox {
         if !editor_available() || self.docked.rt.is_none() {
             return false;
         }
-        if let Event::KeyDown { keycode: Some(Keycode::F4), repeat: false, .. } = event {
-            self.set_docked_open(ctx, !self.docked.open);
-            return true;
+        if let Event::KeyDown { keycode: Some(key), repeat: false, .. } = event {
+            match *key {
+                Keycode::F4 => {
+                    self.set_docked_open(ctx, !self.docked.open);
+                    return true;
+                }
+                // F1/F2 open the editor; once it is open F2 is the shell's Rename.
+                Keycode::F1 | Keycode::F2 if !self.docked.open => {
+                    self.set_docked_open(ctx, true);
+                    return true;
+                }
+                _ => {}
+            }
         }
         if !self.docked.open {
             return false;
+        }
+        if let Event::Quit { .. } = event {
+            // The shell asks about unsaved changes first (see `render_docked_with`).
+            ctx.should_quit = false;
+            self.docked.quit_requested = true;
+            return true;
         }
         let playing = self.mode == EditorMode::Play && !self.paused;
         let Some(rt) = self.docked.rt.as_mut() else { return false };
@@ -431,6 +579,21 @@ impl Sandbox {
             Event::KeyDown { keycode: Some(Keycode::Escape), repeat: false, .. } => {
                 self.docked.captured = false;
                 self.apply_mouse(ctx);
+                return true;
+            }
+            // Shader profile shortcuts: Tab cycles (over the viewport only, Tab is
+            // also egui's focus key), F5 saves the current profile.
+            Event::KeyDown { keycode: Some(Keycode::Tab), repeat: false, .. } if hovered && !typing && !playing => {
+                if let Some(cycler) = self.profiles.as_mut() {
+                    let profile = cycler.next().clone();
+                    if let Err(err) = self.apply_profile(ctx.gl(), ctx.drawable_size(), &profile) {
+                        log::error!("failed to apply profile '{}': {err}", profile.name);
+                    }
+                }
+                return true;
+            }
+            Event::KeyDown { keycode: Some(Keycode::F5), repeat: false, .. } if !typing && !playing => {
+                self.save_current_profile();
                 return true;
             }
             Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } if playing && !self.docked.captured && hovered => {
@@ -501,6 +664,9 @@ impl Sandbox {
         let dt = ctx.time.delta.max(1e-4);
         let perf = PerfSnapshot { fps: 1.0 / dt, frame_ms: dt * 1000.0, entities: self.world.len() as usize, draw_calls };
         let mut world = std::mem::take(&mut self.world);
+        if std::mem::take(&mut self.docked.quit_requested) {
+            rt.shell.request_quit(&mut rt.state, &mut world);
+        }
         {
             let mut host = DockHost { game: self, gl, drawable, editing: rt.state.mode == ShellMode::Edit };
             rt.run_ui(gl, drawable, &mut world, &mut host, perf);
@@ -601,10 +767,12 @@ impl Sandbox {
                     self.exit_play_mode(ctx);
                     self.docked.captured = false;
                 }
-                ShellEvent::SceneNew | ShellEvent::SceneOpened(_) | ShellEvent::SceneSaved(_) => {}
+                ShellEvent::AssetDropped { path, target, .. } => self.docked_asset_dropped(ctx, rt, &path, target),
+                ShellEvent::QuitApproved => ctx.should_quit = true,
                 _ => {}
             }
         }
+        self.docked_scene_ops(ctx, rt);
         // The game left Play by itself (e.g. restart): keep the shell in step.
         if self.mode == EditorMode::Edit && rt.state.mode != ShellMode::Edit {
             rt.state.stop();
@@ -624,6 +792,108 @@ impl Sandbox {
         self.apply_mouse(ctx);
     }
 
+    /// An asset released over the viewport or the hierarchy: an image textures
+    /// the object (or character) under the cursor through the same code as the
+    /// "Browse Texture..." button; a level file loads like the Load list does.
+    fn docked_asset_dropped(&mut self, ctx: &mut Context, rt: &mut EditorRuntime, path: &Path, target: Option<Entity>) {
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        match ext.as_str() {
+            "png" | "jpg" | "jpeg" => {
+                let pick = target.and_then(|e| {
+                    if self.world.satisfies::<(&MeshRenderer, &LevelObjectMeta)>(e).unwrap_or(false) {
+                        Some(PendingTexturePick::ForEntity(e))
+                    } else if self.world.satisfies::<(&MeshRenderer, &CharacterMeta)>(e).unwrap_or(false) {
+                        Some(PendingTexturePick::ForCharacter(e))
+                    } else {
+                        None
+                    }
+                });
+                let Some(pick) = pick else {
+                    rt.shell.console.warn("drop an image onto an object or character to texture it");
+                    return;
+                };
+                // Leave a texture pick the browser is waiting for untouched.
+                let waiting = self.pending_texture_pick.replace(pick);
+                self.push_undo_snapshot();
+                let relative = engine::level::relativize(path, &self.asset_root);
+                self.apply_ui_actions(ctx, Some(relative), None, None, None);
+                self.pending_texture_pick = waiting;
+            }
+            "ron" => match engine::level::load_from_file(path) {
+                Ok(level) => {
+                    self.docked_open_level(ctx, level, path);
+                    rt.shell.console.info(format!("loaded level {}", path.display()));
+                }
+                Err(err) => rt.shell.console.error(format!("{} is not a level: {err}", path.display())),
+            },
+            _ => rt.shell.console.info(format!("nothing to do with {} here", path.display())),
+        }
+    }
+
+    /// Loads `level` as the open level (what the Level tab's Load list does)
+    /// and makes `path` the file File > Save writes to.
+    fn docked_open_level(&mut self, ctx: &mut Context, level: Level, path: &Path) {
+        self.sync_current_level_into_cache();
+        if let Err(err) = self.apply_level(ctx.gl(), &level) {
+            log::error!("failed to load level '{}': {err}", level.name);
+            return;
+        }
+        let mut shared = self.docked.scene.borrow_mut();
+        shared.current = Some(path.to_path_buf());
+        shared.named = Some(level.name.clone());
+        drop(shared);
+        self.cache_level(level);
+    }
+
+    fn cache_level(&mut self, level: Level) {
+        match self.levels.iter_mut().find(|l| l.name == level.name) {
+            Some(existing) => *existing = level,
+            None => self.levels.push(level),
+        }
+    }
+
+    /// File-menu requests queued by [`GameSceneIo`].
+    fn docked_scene_ops(&mut self, ctx: &mut Context, rt: &mut EditorRuntime) {
+        let ops = std::mem::take(&mut self.docked.scene.borrow_mut().ops);
+        for op in ops {
+            match op {
+                SceneOp::New => {
+                    let level = Level { name: "untitled".into(), ..Default::default() };
+                    self.sync_current_level_into_cache();
+                    if let Err(err) = self.apply_level(ctx.gl(), &level) {
+                        rt.shell.console.error(format!("new level: {err}"));
+                    }
+                }
+                SceneOp::Open { level, path } => self.docked_open_level(ctx, level, &path),
+                SceneOp::Save(path) => {
+                    if self.mode != EditorMode::Edit {
+                        rt.shell.console.error("stop playing before saving the level");
+                        continue;
+                    }
+                    reconcile_edit(&mut self.world);
+                    let mut level = self.build_level_from_ecs();
+                    if let Some(name) = path.file_stem() {
+                        level.name = name.to_string_lossy().into_owned();
+                    }
+                    match engine::level::save_to_file(&level, &path) {
+                        Ok(()) => {
+                            self.current_level_name = level.name.clone();
+                            self.cache_level(level);
+                        }
+                        Err(err) => rt.shell.console.error(format!("save {}: {err}", path.display())),
+                    }
+                }
+            }
+        }
+        // The Level tab's Load list switched levels: follow its file.
+        let mut shared = self.docked.scene.borrow_mut();
+        if shared.named.as_deref() != Some(self.current_level_name.as_str()) {
+            let file = self.levels_dir.join(format!("{}.ron", self.current_level_name));
+            shared.current = file.is_file().then_some(file);
+            shared.named = Some(self.current_level_name.clone());
+        }
+    }
+
     /// Shell selection -> F2 panel selection, and back when the panel's
     /// outliner was clicked.
     fn docked_sync_selection(&mut self, rt: &mut EditorRuntime) {
@@ -634,15 +904,11 @@ impl Sandbox {
             self.selected_character = None;
             self.selected_spawner = None;
             self.selected_rig = None;
-            self.selected_entities.clear();
-            self.selected_characters.clear();
             for e in rt.state.selection.to_vec() {
                 if self.world.satisfies::<&LevelObjectMeta>(e).unwrap_or(false) {
                     self.selected_entity = Some(e);
-                    self.selected_entities.insert(e);
                 } else if self.world.satisfies::<&CharacterMeta>(e).unwrap_or(false) {
                     self.selected_character = Some(e);
-                    self.selected_characters.insert(e);
                 } else if self.world.satisfies::<&SpawnerConfig>(e).unwrap_or(false) {
                     self.selected_spawner = Some(e);
                 } else if self.world.satisfies::<&RigRoot>(e).unwrap_or(false) {
@@ -665,11 +931,15 @@ impl Sandbox {
 
     /// Per-frame game UI drawn by the shell's overlay hook: HUD and dialogue
     /// choices while playing, texture browser, multiplayer/appearance windows.
-    fn docked_overlay(&mut self, ctx: &egui::Context) {
+    fn docked_overlay(&mut self, ctx: &egui::Context, viewport: egui::Rect) {
         if let Some(path) = self.texture_asset_browser.show(ctx, &self.asset_root) {
             self.docked.picked_texture = Some(path);
         }
         if self.mode == EditorMode::Play {
+            // HUD, dialogue choices and the hint anchor to the scene image, not
+            // the window, so they stay clear of the dock's toolbar and panels.
+            let window = ctx.input(|i| i.screen_rect);
+            ctx.input_mut(|i| i.screen_rect = viewport);
             draw_hud(ctx, &self.hud, &self.render_params.hud);
             self.draw_dialogue_choices(ctx);
             if !self.paused && !self.docked.captured {
@@ -681,6 +951,7 @@ impl Sandbox {
                         });
                     });
             }
+            ctx.input_mut(|i| i.screen_rect = window);
         }
         if self.docked.show_net || (self.mode == EditorMode::Play && self.paused) {
             self.docked.net_actions = self.draw_net_panels(ctx);
@@ -856,9 +1127,14 @@ impl ShellHost for DockHost<'_> {
         true
     }
 
-    fn viewport_overlay(&mut self, ctx: &egui::Context, _viewport: egui::Rect, world: &mut World) {
+    fn accepts_asset_drop(&mut self, path: &std::path::Path) -> bool {
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
+        matches!(ext.as_deref(), Some("png" | "jpg" | "jpeg" | "ron"))
+    }
+
+    fn viewport_overlay(&mut self, ctx: &egui::Context, viewport: egui::Rect, world: &mut World) {
         std::mem::swap(&mut self.game.world, world);
-        self.game.docked_overlay(ctx);
+        self.game.docked_overlay(ctx, viewport);
         std::mem::swap(&mut self.game.world, world);
     }
 }
