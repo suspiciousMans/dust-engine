@@ -44,6 +44,9 @@ use engine::shader::{shader_files_for, ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
 use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
 
+/// F4 docked editor: engine `EditorRuntime` hosted around this game.
+mod docked;
+
 fn default_demo_profiles() -> Vec<ShaderProfile> {
     let make = |name: &str, render: RenderParams| ShaderProfile {
         name: name.to_string(),
@@ -893,6 +896,7 @@ struct RigRoot {
 /// Tags an entity spawned from an `engine::class::ObjectClass` so
 /// "Apply to All Instances" can find every member of a class, and so
 /// `build_level_from_ecs` can write `LevelObject::class` back out.
+#[derive(Clone)]
 struct ClassMember {
     class_path: PathBuf,
 }
@@ -1182,6 +1186,16 @@ struct Sandbox {
     net_reconnect_attempts_left: u32,
     /// Seconds until the next automatic reconnect attempt.
     net_reconnect_timer: f32,
+    /// F4 docked editor (`docked.rs`); `None` in a release build.
+    docked: Option<docked::DockedEditor>,
+    /// Mirrors `docked.rt.open`, readable while `docked` is taken out for a frame.
+    docked_open: bool,
+    /// Docked Play only: the mouse is captured (relative mode) so the game
+    /// gets input; Esc releases it so the editor UI is usable.
+    docked_captured: bool,
+    /// Bumped by `apply_level`; the docked editor drops its undo history and
+    /// selection when this changes, because every entity id is then stale.
+    level_generation: u32,
 }
 
 /// Which side of a listen-server multiplayer session `Sandbox` is
@@ -1291,6 +1305,10 @@ impl Sandbox {
             remote_level_switch_permission: HashMap::new(),
             net_reconnect_attempts_left: 0,
             net_reconnect_timer: 0.0,
+            docked: None,
+            docked_open: false,
+            docked_captured: false,
+            level_generation: 0,
             audio: match AudioContext::new() {
                 Ok(audio) => Some(audio),
                 Err(err) => {
@@ -2242,6 +2260,7 @@ impl Sandbox {
 
     fn apply_level(&mut self, gl: &glow::Context, level: &Level) -> anyhow::Result<()> {
         self.world.clear();
+        self.level_generation = self.level_generation.wrapping_add(1);
         self.selected_entity = None;
         self.selected_rig = None;
         self.selected_rig_part = None;
@@ -6835,6 +6854,295 @@ impl Sandbox {
     }
 }
 
+impl Sandbox {
+    /// Draws the whole scene (meshes, lit/normal-mapped passes, skybox,
+    /// particles) into the renderer's scene target at `size` pixels and
+    /// returns the number of mesh draw calls. Shared by the plain game
+    /// `render` and the docked editor's viewport (`docked.rs`).
+    fn draw_scene(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> anyhow::Result<u32> {
+        let params = self.render_params;
+
+        let renderer = self.renderer.as_mut().expect("renderer set up in init");
+        renderer.resize_if_needed(gl, size)?;
+        renderer.begin_scene(gl);
+
+        let shader_cache = self
+            .shader_cache
+            .as_mut()
+            .expect("shader cache set up in init");
+        let flags = if params.affine_texture_mapping {
+            AFFINE_UV_BIT
+        } else {
+            0
+        };
+        let program = shader_cache.get_or_compile(gl, flags)?;
+        let uniforms = MeshUniforms::resolve(gl, program);
+
+        // Compiled eagerly (not on first LitNormals mesh) so a broken
+        // normals shader surfaces at startup. A compile failure disables
+        // the pass for this profile instead of failing every frame.
+        let normals_pass = match self.normals_shader_cache.as_mut().map(|cache| cache.get_or_compile(gl, flags)) {
+            Some(Ok(normals_program)) => Some((normals_program, MeshUniforms::resolve(gl, normals_program))),
+            Some(Err(err)) => {
+                log::error!("LitNormals shader failed to compile, falling back to the standard mesh shader: {err}");
+                self.normals_shader_cache = None;
+                None
+            }
+            None => None,
+        };
+
+        unsafe {
+            gl.clear_color(params.fog_color[0], params.fog_color[1], params.fog_color[2], 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+
+        // Drawn first, depth-write disabled, so mesh geometry drawn after
+        // this always occludes it normally — see `SkyboxPass` for why no
+        // cubemap/dome mesh is needed.
+        let inv_view_proj = (proj * view).inverse();
+        renderer.draw_skybox(gl, inv_view_proj.to_cols_array(), params.sky_horizon_color, params.sky_zenith_color);
+
+        let mut draw_calls: u32 = 0;
+        unsafe {
+            // Scoped to just this opaque mesh loop — left untouched for the
+            // skybox (a single fullscreen triangle already drawn above) and
+            // for particle billboards (drawn after, via their own begin/end).
+            if params.backface_culling {
+                gl.enable(glow::CULL_FACE);
+                gl.cull_face(glow::BACK);
+            } else {
+                gl.disable(glow::CULL_FACE);
+            }
+
+            let point_lights: Vec<(Vec3, Vec3, f32, f32)> = self
+                .world
+                .query::<(&Transform, &Light)>()
+                .iter()
+                // A `Static` light is baked into nearby geometry's vertex
+                // colors instead (see `bake_static_lighting`) — skip it here
+                // so it doesn't consume one of the 4 live dynamic-light
+                // slots that would otherwise go to an actually-moving light.
+                .filter(|(_entity, (_transform, light))| !light.is_static)
+                .filter_map(|(_entity, (transform, light))| match light.kind {
+                    LightKind::Point { range } => {
+                        Some((transform.position, light.color, light.intensity, range))
+                    }
+                    LightKind::Directional { .. } => None,
+                })
+                .take(MAX_POINT_LIGHTS)
+                .collect();
+            let camera_pos = view.inverse().w_axis.truncate();
+
+            // Pass 1: the profile's standard mesh program — everything
+            // except LitNormals meshes (unless that pass is unavailable).
+            gl.use_program(Some(program));
+            uniforms.upload_frame(gl, &params, view, proj, camera_pos, &point_lights);
+            for (_entity, (transform, mesh_renderer, material)) in
+                self.world.query::<(&Transform, &MeshRenderer, Option<&Material>)>().iter()
+            {
+                if normals_pass.is_some() && uses_normals_program(material) {
+                    continue;
+                }
+                gl.uniform_matrix_4_f32_slice(
+                    uniforms.model.as_ref(),
+                    false,
+                    &transform.matrix().to_cols_array(),
+                );
+                if let Some(texture) = &mesh_renderer.texture {
+                    texture.bind(gl, 0);
+                    gl.uniform_1_i32(uniforms.tex.as_ref(), 0);
+                }
+                mesh_renderer.mesh.draw(gl);
+                draw_calls += 1;
+            }
+
+            // Pass 2: LitNormals meshes — base texture on unit 0, normal
+            // map on unit 1, per-pixel lighting.
+            if let Some((normals_program, normals_uniforms)) = &normals_pass {
+                gl.use_program(Some(*normals_program));
+                normals_uniforms.upload_frame(gl, &params, view, proj, camera_pos, &point_lights);
+                gl.uniform_1_i32(normals_uniforms.tex.as_ref(), 0);
+                gl.uniform_1_i32(normals_uniforms.normal_map.as_ref(), 1);
+
+                for (_entity, (transform, mesh_renderer, material)) in
+                    self.world.query::<(&Transform, &MeshRenderer, Option<&Material>)>().iter()
+                {
+                    let Some(material) = material.filter(|m| uses_normals_program(Some(m))) else {
+                        continue;
+                    };
+
+                    gl.uniform_matrix_4_f32_slice(
+                        normals_uniforms.model.as_ref(),
+                        false,
+                        &transform.matrix().to_cols_array(),
+                    );
+                    if let Some(texture) = &mesh_renderer.texture {
+                        texture.bind(gl, 0);
+                    }
+
+                    let normal_tex = material.normal_map.as_ref().and_then(|path| {
+                        self.normal_map_cache
+                            .entry(path.clone())
+                            .or_insert_with(|| {
+                                match GpuTexture::load_from_file(
+                                    gl,
+                                    &self.asset_root.join(path),
+                                    TextureFilter::Bilinear,
+                                ) {
+                                    Ok(texture) => Some(Arc::new(texture)),
+                                    Err(err) => {
+                                        log::error!("failed to load normal map {path:?}, drawing without it: {err}");
+                                        None
+                                    }
+                                }
+                            })
+                            .clone()
+                    });
+                    match &normal_tex {
+                        Some(texture) => {
+                            texture.bind(gl, 1);
+                            gl.uniform_1_i32(normals_uniforms.has_normal_map.as_ref(), 1);
+                        }
+                        None => gl.uniform_1_i32(normals_uniforms.has_normal_map.as_ref(), 0),
+                    }
+                    gl.uniform_1_f32(normals_uniforms.roughness.as_ref(), material.roughness);
+                    gl.uniform_1_f32(normals_uniforms.metallic.as_ref(), material.metallic);
+
+                    mesh_renderer.mesh.draw(gl);
+                    draw_calls += 1;
+                }
+
+                // `GpuTexture::bind` leaves the active unit where it was
+                // last set; later passes (particles, egui) assume unit 0.
+                gl.active_texture(glow::TEXTURE0);
+            }
+
+            gl.disable(glow::CULL_FACE);
+        }
+
+        // Camera-facing (billboarded) particles, drawn after opaque meshes
+        // so they blend over the already-drawn scene. `view.inverse()`'s
+        // rotation is the camera's own world-space orientation — applying
+        // it to every particle's quad makes it face the viewer regardless
+        // of camera angle.
+        if self.particle_quad_mesh.is_none() {
+            self.particle_quad_mesh = Some(Arc::new(GpuMesh::upload(gl, &primitives::quad())?));
+        }
+        let quad_mesh = self.particle_quad_mesh.as_ref().unwrap().clone();
+        let (_, billboard_rotation, _) = view.inverse().to_scale_rotation_translation();
+        let mut particle_draws: Vec<(Arc<GpuMesh>, [f32; 16], [f32; 4])> = Vec::new();
+        for (_entity, (_transform, emitter)) in self.world.query::<(&Transform, &ParticleEmitter)>().iter() {
+            for particle in &emitter.particles {
+                let (size, color) = emitter.appearance(particle);
+                let model = Mat4::from_scale_rotation_translation(Vec3::splat(size), billboard_rotation, particle.position);
+                particle_draws.push((quad_mesh.clone(), model.to_cols_array(), color));
+            }
+        }
+        renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
+        Ok(draw_calls)
+    }
+}
+
+impl Sandbox {
+    /// Applies a thumbnail picked in the texture asset browser to whatever
+    /// opened it (`pending_texture_pick`). Used by both the F1/F2 overlay
+    /// and the docked editor.
+    fn apply_picked_texture(&mut self, gl: &glow::Context, path: PathBuf) {
+        match self.pending_texture_pick.take() {
+            Some(PendingTexturePick::ForEntity(entity)) => {
+                match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
+                    Ok(texture) => {
+                        let texture = Arc::new(texture);
+                        if let Ok(mut query) =
+                            self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity)
+                        {
+                            if let Some((renderer, meta)) = query.get() {
+                                renderer.texture = Some(texture);
+                                meta.texture_path = Some(path.clone());
+                            }
+                        }
+                        log::info!("assigned texture {path:?} via asset browser");
+                    }
+                    Err(err) => log::error!("failed to load texture {path:?}: {err}"),
+                }
+            }
+            Some(PendingTexturePick::ForClass(index)) => {
+                if let Some(class) = self.classes.get_mut(index) {
+                    class.texture_path = Some(path);
+                }
+            }
+            Some(PendingTexturePick::ForCharacter(entity)) => {
+                match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
+                    Ok(texture) => {
+                        let texture = Arc::new(texture);
+                        if let Ok(mut query) =
+                            self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity)
+                        {
+                            if let Some((renderer, meta)) = query.get() {
+                                renderer.texture = Some(texture);
+                                meta.texture_path = Some(path.clone());
+                            }
+                        }
+                        log::info!("assigned character texture {path:?} via asset browser");
+                    }
+                    Err(err) => log::error!("failed to load texture {path:?}: {err}"),
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+impl Sandbox {
+    /// The multiplayer and player-appearance windows shown while paused in
+    /// Play. Shared by the F1/F2 overlay and the docked editor.
+    fn draw_pause_side_panels(
+        &mut self,
+        egui_ctx: &egui::Context,
+    ) -> (Option<engine::ui::MultiplayerAction>, Option<engine::ui::AppearanceAction>) {
+        // Every currently-loaded rig, by name, for the appearance panel's
+        // picker list; the local player's own chosen appearance (if any),
+        // resolved to that same name for highlighting the current
+        // selection — see `find_rig_asset` for the path-to-name lookup.
+        let appearance_rig_names: Vec<String> = self.rigs.iter().map(|rig| rig.name.clone()).collect();
+        let current_appearance_name: Option<String> =
+            self.local_appearance.as_deref().and_then(|path| self.find_rig_asset(path)).map(|rig| rig.name.clone());
+        let net_status_text = self.net_status_text();
+        let net_connected = matches!(self.net_mode, NetMode::Host(_))
+            || matches!(&self.net_mode, NetMode::Client(client) if client.is_connected());
+        // Host-only roster for the multiplayer panel's player list — a
+        // client sees `&[]` (see `draw_multiplayer_panel`'s doc comment).
+        let net_players: Vec<(NetId, String, bool)> = if let NetMode::Host(host) = &self.net_mode {
+            host.connected_ids()
+                .into_iter()
+                .filter_map(|net_id| {
+                    host.player_name(net_id).map(|name| {
+                        let allowed = self.remote_level_switch_permission.get(&net_id).copied().unwrap_or(false);
+                        (net_id, name.to_string(), allowed)
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let multiplayer_action = engine::ui::draw_multiplayer_panel(
+            egui_ctx,
+            &net_status_text,
+            net_connected,
+            self.net_reconnect_attempts_left > 0,
+            &mut self.net_join_address,
+            &mut self.net_player_name,
+            &net_players,
+        );
+        let appearance_action = engine::ui::draw_appearance_panel(
+            egui_ctx,
+            current_appearance_name.as_deref(),
+            &appearance_rig_names,
+        );
+        (multiplayer_action, appearance_action)
+    }
+}
+
 impl Game for Sandbox {
     fn init(&mut self, ctx: &mut Context) -> anyhow::Result<()> {
         unsafe {
@@ -6939,6 +7247,10 @@ impl Game for Sandbox {
         }
         self.levels = levels;
 
+        if editor_available() {
+            self.init_docked(ctx);
+        }
+
         // A shipped/release build has no editor to land in — go straight
         // to Play so the very first frame a player sees is the game.
         if !editor_available() {
@@ -6959,6 +7271,9 @@ impl Game for Sandbox {
     }
 
     fn handle_event(&mut self, ctx: &mut Context, event: &Event) {
+        if editor_available() && self.handle_docked_event(ctx, event) {
+            return;
+        }
         if let Some(ui) = self.ui.as_mut() {
             ui.handle_event(event);
         }
@@ -7163,7 +7478,7 @@ impl Game for Sandbox {
             self.smooth_networked_transforms(dt);
         }
 
-        if self.mode == EditorMode::Edit {
+        if self.mode == EditorMode::Edit && !self.docked_open {
             let ui_wants_keyboard = self.ui.as_ref().map(|ui| ui.wants_keyboard_input()).unwrap_or(false);
             if !ui_wants_keyboard {
                 self.update_editor_camera_input(ctx, dt);
@@ -7171,7 +7486,12 @@ impl Game for Sandbox {
         }
 
         if self.mode == EditorMode::Play && !self.paused {
-            self.update_player_input(ctx, dt);
+            // Docked Play without a captured mouse: the editor UI owns input.
+            if self.docked_open && !self.docked_captured {
+                self.idle_player();
+            } else {
+                self.update_player_input(ctx, dt);
+            }
 
             // `update_player_input` above still runs unconditionally — it
             // drives local camera feel (look, head bob, strafe tilt, FOV
@@ -7395,6 +7715,9 @@ impl Game for Sandbox {
     }
 
     fn render(&mut self, ctx: &mut Context) -> anyhow::Result<()> {
+        if self.docked_open {
+            return self.render_docked(ctx);
+        }
         let drawable_size = ctx.drawable_size();
         let aspect = ctx.aspect_ratio();
         let (view, proj) = match self.mode {
@@ -7405,185 +7728,9 @@ impl Game for Sandbox {
             }
         };
         let params = self.render_params;
-
         let gl = ctx.gl();
+        let draw_calls = self.draw_scene(gl, drawable_size, view, proj)?;
         let renderer = self.renderer.as_mut().expect("renderer set up in init");
-        renderer.resize_if_needed(gl, drawable_size)?;
-        renderer.begin_scene(gl);
-
-        let shader_cache = self
-            .shader_cache
-            .as_mut()
-            .expect("shader cache set up in init");
-        let flags = if params.affine_texture_mapping {
-            AFFINE_UV_BIT
-        } else {
-            0
-        };
-        let program = shader_cache.get_or_compile(gl, flags)?;
-        let uniforms = MeshUniforms::resolve(gl, program);
-
-        // Compiled eagerly (not on first LitNormals mesh) so a broken
-        // normals shader surfaces at startup. A compile failure disables
-        // the pass for this profile instead of failing every frame.
-        let normals_pass = match self.normals_shader_cache.as_mut().map(|cache| cache.get_or_compile(gl, flags)) {
-            Some(Ok(normals_program)) => Some((normals_program, MeshUniforms::resolve(gl, normals_program))),
-            Some(Err(err)) => {
-                log::error!("LitNormals shader failed to compile, falling back to the standard mesh shader: {err}");
-                self.normals_shader_cache = None;
-                None
-            }
-            None => None,
-        };
-
-        unsafe {
-            gl.clear_color(params.fog_color[0], params.fog_color[1], params.fog_color[2], 1.0);
-            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-        }
-
-        // Drawn first, depth-write disabled, so mesh geometry drawn after
-        // this always occludes it normally — see `SkyboxPass` for why no
-        // cubemap/dome mesh is needed.
-        let inv_view_proj = (proj * view).inverse();
-        renderer.draw_skybox(gl, inv_view_proj.to_cols_array(), params.sky_horizon_color, params.sky_zenith_color);
-
-        let mut draw_calls: u32 = 0;
-        unsafe {
-            // Scoped to just this opaque mesh loop — left untouched for the
-            // skybox (a single fullscreen triangle already drawn above) and
-            // for particle billboards (drawn after, via their own begin/end).
-            if params.backface_culling {
-                gl.enable(glow::CULL_FACE);
-                gl.cull_face(glow::BACK);
-            } else {
-                gl.disable(glow::CULL_FACE);
-            }
-
-            let point_lights: Vec<(Vec3, Vec3, f32, f32)> = self
-                .world
-                .query::<(&Transform, &Light)>()
-                .iter()
-                // A `Static` light is baked into nearby geometry's vertex
-                // colors instead (see `bake_static_lighting`) — skip it here
-                // so it doesn't consume one of the 4 live dynamic-light
-                // slots that would otherwise go to an actually-moving light.
-                .filter(|(_entity, (_transform, light))| !light.is_static)
-                .filter_map(|(_entity, (transform, light))| match light.kind {
-                    LightKind::Point { range } => {
-                        Some((transform.position, light.color, light.intensity, range))
-                    }
-                    LightKind::Directional { .. } => None,
-                })
-                .take(MAX_POINT_LIGHTS)
-                .collect();
-            let camera_pos = view.inverse().w_axis.truncate();
-
-            // Pass 1: the profile's standard mesh program — everything
-            // except LitNormals meshes (unless that pass is unavailable).
-            gl.use_program(Some(program));
-            uniforms.upload_frame(gl, &params, view, proj, camera_pos, &point_lights);
-            for (_entity, (transform, mesh_renderer, material)) in
-                self.world.query::<(&Transform, &MeshRenderer, Option<&Material>)>().iter()
-            {
-                if normals_pass.is_some() && uses_normals_program(material) {
-                    continue;
-                }
-                gl.uniform_matrix_4_f32_slice(
-                    uniforms.model.as_ref(),
-                    false,
-                    &transform.matrix().to_cols_array(),
-                );
-                if let Some(texture) = &mesh_renderer.texture {
-                    texture.bind(gl, 0);
-                    gl.uniform_1_i32(uniforms.tex.as_ref(), 0);
-                }
-                mesh_renderer.mesh.draw(gl);
-                draw_calls += 1;
-            }
-
-            // Pass 2: LitNormals meshes — base texture on unit 0, normal
-            // map on unit 1, per-pixel lighting.
-            if let Some((normals_program, normals_uniforms)) = &normals_pass {
-                gl.use_program(Some(*normals_program));
-                normals_uniforms.upload_frame(gl, &params, view, proj, camera_pos, &point_lights);
-                gl.uniform_1_i32(normals_uniforms.tex.as_ref(), 0);
-                gl.uniform_1_i32(normals_uniforms.normal_map.as_ref(), 1);
-
-                for (_entity, (transform, mesh_renderer, material)) in
-                    self.world.query::<(&Transform, &MeshRenderer, Option<&Material>)>().iter()
-                {
-                    let Some(material) = material.filter(|m| uses_normals_program(Some(m))) else {
-                        continue;
-                    };
-
-                    gl.uniform_matrix_4_f32_slice(
-                        normals_uniforms.model.as_ref(),
-                        false,
-                        &transform.matrix().to_cols_array(),
-                    );
-                    if let Some(texture) = &mesh_renderer.texture {
-                        texture.bind(gl, 0);
-                    }
-
-                    let normal_tex = material.normal_map.as_ref().and_then(|path| {
-                        self.normal_map_cache
-                            .entry(path.clone())
-                            .or_insert_with(|| {
-                                match GpuTexture::load_from_file(
-                                    gl,
-                                    &self.asset_root.join(path),
-                                    TextureFilter::Bilinear,
-                                ) {
-                                    Ok(texture) => Some(Arc::new(texture)),
-                                    Err(err) => {
-                                        log::error!("failed to load normal map {path:?}, drawing without it: {err}");
-                                        None
-                                    }
-                                }
-                            })
-                            .clone()
-                    });
-                    match &normal_tex {
-                        Some(texture) => {
-                            texture.bind(gl, 1);
-                            gl.uniform_1_i32(normals_uniforms.has_normal_map.as_ref(), 1);
-                        }
-                        None => gl.uniform_1_i32(normals_uniforms.has_normal_map.as_ref(), 0),
-                    }
-                    gl.uniform_1_f32(normals_uniforms.roughness.as_ref(), material.roughness);
-                    gl.uniform_1_f32(normals_uniforms.metallic.as_ref(), material.metallic);
-
-                    mesh_renderer.mesh.draw(gl);
-                    draw_calls += 1;
-                }
-
-                // `GpuTexture::bind` leaves the active unit where it was
-                // last set; later passes (particles, egui) assume unit 0.
-                gl.active_texture(glow::TEXTURE0);
-            }
-
-            gl.disable(glow::CULL_FACE);
-        }
-
-        // Camera-facing (billboarded) particles, drawn after opaque meshes
-        // so they blend over the already-drawn scene. `view.inverse()`'s
-        // rotation is the camera's own world-space orientation — applying
-        // it to every particle's quad makes it face the viewer regardless
-        // of camera angle.
-        if self.particle_quad_mesh.is_none() {
-            self.particle_quad_mesh = Some(Arc::new(GpuMesh::upload(gl, &primitives::quad())?));
-        }
-        let quad_mesh = self.particle_quad_mesh.as_ref().unwrap().clone();
-        let (_, billboard_rotation, _) = view.inverse().to_scale_rotation_translation();
-        let mut particle_draws: Vec<(Arc<GpuMesh>, [f32; 16], [f32; 4])> = Vec::new();
-        for (_entity, (_transform, emitter)) in self.world.query::<(&Transform, &ParticleEmitter)>().iter() {
-            for particle in &emitter.particles {
-                let (size, color) = emitter.appearance(particle);
-                let model = Mat4::from_scale_rotation_translation(Vec3::splat(size), billboard_rotation, particle.position);
-                particle_draws.push((quad_mesh.clone(), model.to_cols_array(), color));
-            }
-        }
-        renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
 
         let (tint_color, tint_strength) = self.screen_effects.current();
         renderer.present(
@@ -7632,31 +7779,6 @@ impl Game for Sandbox {
         let mut pause_menu_action: Option<PauseMenuAction> = None;
         let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
         let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
-        // Every currently-loaded rig, by name, for the appearance panel's
-        // picker list; the local player's own chosen appearance (if any),
-        // resolved to that same name for highlighting the current
-        // selection — see `find_rig_asset` for the path-to-name lookup.
-        let appearance_rig_names: Vec<String> = self.rigs.iter().map(|rig| rig.name.clone()).collect();
-        let current_appearance_name: Option<String> =
-            self.local_appearance.as_deref().and_then(|path| self.find_rig_asset(path)).map(|rig| rig.name.clone());
-        let net_status_text = self.net_status_text();
-        let net_connected = matches!(self.net_mode, NetMode::Host(_))
-            || matches!(&self.net_mode, NetMode::Client(client) if client.is_connected());
-        // Host-only roster for the multiplayer panel's player list — a
-        // client sees `&[]` (see `draw_multiplayer_panel`'s doc comment).
-        let net_players: Vec<(NetId, String, bool)> = if let NetMode::Host(host) = &self.net_mode {
-            host.connected_ids()
-                .into_iter()
-                .filter_map(|net_id| {
-                    host.player_name(net_id).map(|name| {
-                        let allowed = self.remote_level_switch_permission.get(&net_id).copied().unwrap_or(false);
-                        (net_id, name.to_string(), allowed)
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
         let mut picked_texture: Option<PathBuf> = None;
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if profiler_visible {
@@ -7705,20 +7827,7 @@ impl Game for Sandbox {
                 self.draw_dialogue_choices(egui_ctx);
                 if self.paused {
                     pause_menu_action = draw_pause_menu(egui_ctx, editor_available());
-                    multiplayer_action = engine::ui::draw_multiplayer_panel(
-                        egui_ctx,
-                        &net_status_text,
-                        net_connected,
-                        self.net_reconnect_attempts_left > 0,
-                        &mut self.net_join_address,
-                        &mut self.net_player_name,
-                        &net_players,
-                    );
-                    appearance_action = engine::ui::draw_appearance_panel(
-                        egui_ctx,
-                        current_appearance_name.as_deref(),
-                        &appearance_rig_names,
-                    );
+                    (multiplayer_action, appearance_action) = self.draw_pause_side_panels(egui_ctx);
                 }
             }
         });
@@ -7726,48 +7835,7 @@ impl Game for Sandbox {
         self.ui = Some(ui_state);
 
         if let Some(path) = picked_texture {
-            match self.pending_texture_pick.take() {
-                Some(PendingTexturePick::ForEntity(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                Some(PendingTexturePick::ForClass(index)) => {
-                    if let Some(class) = self.classes.get_mut(index) {
-                        class.texture_path = Some(path);
-                    }
-                }
-                Some(PendingTexturePick::ForCharacter(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned character texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                None => {}
-            }
+            self.apply_picked_texture(gl, path);
         }
 
         match pause_menu_action {
