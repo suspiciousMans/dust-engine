@@ -281,7 +281,7 @@ fn default_level() -> Level {
     // Two instances of the "barrel" class — demonstrates the class/family
     // system: mesh/texture/scale/physics all come from `classes/barrel.ron`
     // at spawn time, not from the fields below (kept only as a fallback in
-    // case the class is ever deleted). Edit the class in F2 and click
+    // case the class is ever deleted). Edit the class in the Create tab and click
     // "Apply to All Instances" to see both barrels update together.
     let make_barrel = |name: &str, x: f32| LevelObject {
         name: name.to_string(),
@@ -855,7 +855,7 @@ enum PendingTexturePick {
 /// `true` in debug builds, `false` in release. `cargo build --release`
 /// (what `package.ps1` already uses for shipping) is treated as "this is
 /// the game a player gets," so it never enters `EditorMode::Edit`: no
-/// panels, no F1/F2/Tab/F5/F3, no orbit-camera drag. `cfg!()` is a
+/// docked editor, no F1/F2/F3/F4. `cfg!()` is a
 /// compile-time constant, so every `if editor_available()` branch below
 /// is dead code in a release build, not just an unreachable runtime path.
 fn editor_available() -> bool {
@@ -885,8 +885,7 @@ fn number_key_index(keycode: Keycode) -> Option<usize> {
 struct NativeBehaviorDemoMarker;
 
 /// Tags a rig instance's root entity (see `spawn_rig_instance`) so it can be
-/// listed in the F2 "Rigs" section separately from the flat "Scene Objects"
-/// outliner, and so `build_level_from_ecs` can reconstruct `Level.rig_instances`.
+/// recognised as a rig (the Selected tab shows the rig editor for it), and so `build_level_from_ecs` can reconstruct `Level.rig_instances`.
 struct RigRoot {
     name: String,
     rig_path: PathBuf,
@@ -949,7 +948,7 @@ struct Sandbox {
     /// convention as `audio: Option<AudioContext>`) or in a shipped build
     /// (`init` only starts it when `editor_available()`).
     hot_reload: Option<HotReloadWatcher>,
-    /// F2 panel: in-editor texture thumbnail browser, opened by a "Browse
+    /// editor panel: in-editor texture thumbnail browser, opened by a "Browse
     /// Texture..." button (alongside the existing OS-dialog "Assign
     /// Texture..." button, not replacing it) and `pending_texture_pick`
     /// tracking which entity/class it was opened for.
@@ -977,7 +976,7 @@ struct Sandbox {
     paused: bool,
     fp_camera: FirstPersonCamera,
     /// Optional walking view-bob, applied on top of `fp_camera` in
-    /// `player_eye_position`. Toggle/tune live via the F1 panel's "Camera"
+    /// `player_eye_position`. Toggle/tune live via the Render tab's "Camera"
     /// section.
     head_bob: HeadBob,
     /// Momentary camera jitter — fired via `ScriptApi::camera_shake` or a
@@ -1010,18 +1009,18 @@ struct Sandbox {
     trigger_overlaps: HashSet<(Entity, Entity)>,
     /// Total seconds since startup — stored (rather than read from `Context`
     /// each time) since scripts can be dispatched from places without a
-    /// `Context` handy (spawning, the F2 panel).
+    /// `Context` handy (spawning, the editor panel).
     elapsed_time: f32,
-    /// F2 panel: whether the selected object's script is being edited
+    /// editor panel: whether the selected object's script is being edited
     /// inline, and the text buffer backing that `TextEdit`.
     script_editor_open: bool,
     script_editor_buffer: String,
     rigs_dir: PathBuf,
     rigs: Vec<RigAsset>,
-    /// F2 panel: the currently selected rig *instance* (its root entity)
+    /// editor panel: the currently selected rig *instance* (its root entity)
     /// and, within it, the currently selected *part* for hand-posing — kept
     /// separate from `selected_entity` since rigs get their own "Rigs"
-    /// section rather than sharing the flat Scene Objects outliner.
+    /// section rather than sharing the plain level-object details.
     selected_rig: Option<Entity>,
     selected_rig_part: Option<Entity>,
     /// Cache for loaded normal map textures, keyed by file path. `None`
@@ -1036,12 +1035,12 @@ struct Sandbox {
     /// before the first level ever loads. Used by `engine::ai::step` for
     /// character pathfinding.
     nav_grid: Option<NavGrid>,
-    /// F2 panel: the currently selected character entity, mirroring
+    /// editor panel: the currently selected character entity, mirroring
     /// `selected_rig` — characters get their own "Characters" section
-    /// rather than sharing the flat Scene Objects outliner, since they
+    /// rather than sharing the plain level-object details, since they
     /// have no `LevelObjectMeta`.
     selected_character: Option<Entity>,
-    /// F2 panel: the currently selected spawner entity, mirroring
+    /// editor panel: the currently selected spawner entity, mirroring
     /// `selected_character` — spawners get their own "Spawners" section
     /// since they have no `LevelObjectMeta`/`CharacterMeta`.
     selected_spawner: Option<Entity>,
@@ -1068,11 +1067,11 @@ struct Sandbox {
     new_clip_looping: bool,
     classes_dir: PathBuf,
     classes: Vec<ObjectClass>,
-    /// F2 panel: the currently selected *class* (an index into `classes`,
+    /// editor panel: the currently selected *class* (an index into `classes`,
     /// not an ECS entity — a class is plain data, not a live thing).
     selected_class: Option<usize>,
     class_new_name: String,
-    /// F2 panel: transient input buffer for the "Add Particle Emitter"
+    /// editor panel: transient input buffer for the "Add Particle Emitter"
     /// naming — actual per-emitter properties are edited on the selected
     /// entity's own `ParticleEmitter` component, not buffered here.
     particle_emitter_new_name: String,
@@ -1093,10 +1092,10 @@ struct Sandbox {
     saves_dir: PathBuf,
     /// The current level's background music, if any — mirrors
     /// `Level::music_path` and is set/cleared by `apply_level`, edited via
-    /// the F2 panel's "Assign Music.../Stop Music", and written back out by
+    /// the editor panel's "Assign Music.../Stop Music", and written back out by
     /// `build_level_from_ecs`.
     current_music_path: Option<PathBuf>,
-    /// Persists the F2 panel's volume slider across level loads, since
+    /// Persists the editor panel's volume slider across level loads, since
     /// `play_music_file` itself has no volume parameter — re-applied via
     /// `set_music_volume` every time music (re)starts.
     music_volume: f32,
@@ -1128,7 +1127,7 @@ struct Sandbox {
     /// self-mesh regardless of this value. Transient — not persisted to
     /// `SaveData`.
     local_appearance: Option<PathBuf>,
-    /// F2-panel-style transient input buffers for the multiplayer panel's
+    /// editor-panel-style transient input buffers for the multiplayer panel's
     /// "Address"/"Name" fields, persisted across frames the same way
     /// `level_save_as_name` already is.
     net_join_address: String,
@@ -1575,7 +1574,7 @@ impl Sandbox {
             }
             MeshSource::GltfFile(path) => {
                 // Same "first entry only" convention as ObjFile above — a
-                // multi-node glTF is better imported as a rig (F2 panel's
+                // multi-node glTF is better imported as a rig (editor panel's
                 // "Import glTF as Rig...") than collapsed into one object.
                 let scene = load_gltf(&self.asset_root.join(path))?;
                 let entry = scene
@@ -1641,7 +1640,7 @@ impl Sandbox {
     /// Called automatically at the end of `apply_level` (mirroring
     /// `NavGrid::bake` — cheap enough to always recompute fresh on every
     /// level load/undo/redo, never persisted to `Level`/RON) and also
-    /// exposed as an F2 "Rebake Lighting" button for previewing a moved
+    /// exposed as an Create-tab "Rebake Lighting" button for previewing a moved
     /// static light without a full reload.
     fn bake_static_lighting(&mut self, gl: &glow::Context) {
         let static_lights: Vec<(Vec3, Vec3, f32, f32)> = self
@@ -1869,7 +1868,7 @@ impl Sandbox {
     }
 
     /// Spawns a point light: `Transform` + `Light` + `LevelObjectMeta` (name
-    /// only, no mesh/texture) so it shares the F2 outliner's selection code
+    /// only, no mesh/texture) so it shares the editor hierarchy's selection code
     /// with mesh objects while carrying its own color/intensity/range fields.
     fn spawn_level_light(&mut self, light: &LevelLight) -> Entity {
         self.world.spawn((
@@ -1899,7 +1898,7 @@ impl Sandbox {
 
     /// Spawns a placed particle emitter: `Transform` + `LevelObjectMeta`
     /// (a filler `mesh_source`, no `MeshRenderer` — same trick
-    /// `spawn_level_light` uses so it shares the outliner/selection code)
+    /// `spawn_level_light` uses so it shares the hierarchy/selection code)
     /// + `ParticleEmitter`.
     fn spawn_level_particle_emitter(&mut self, emitter: &LevelParticleEmitter) -> Entity {
         self.world.spawn((
@@ -2014,7 +2013,7 @@ impl Sandbox {
     /// function's plain-`Transform`-parent fallback). No `Rig`/
     /// `RigAnimator`/`RigRoot` involved — no animation for player rigs in
     /// v1, so nothing needs to drive clip playback, and this deliberately
-    /// keeps player proxies out of the F2 "Rigs" panel (which only lists
+    /// keeps player proxies out of the editor "Rigs" panel (which only lists
     /// `RigRoot` entities).
     fn spawn_player_rig_visual(
         &mut self,
@@ -2222,9 +2221,9 @@ impl Sandbox {
     /// Spawns a placed periodic spawner: `Transform` (its position is where
     /// spawned characters appear around, via `spawn_radius`) +
     /// `SpawnerConfig`/`SpawnerState`. No mesh/collider of its own — it's a
-    /// logic-only marker, drawn nowhere, listed only in the F2 panel's own
-    /// "Spawners" outliner (mirrors how `CharacterMeta`/characters get
-    /// their own section rather than sharing "Scene Objects").
+    /// logic-only marker, drawn nowhere, shown only in the hierarchy and
+    /// the Selected tab's spawner editor (mirrors how `CharacterMeta`/
+    /// characters get their own detail section).
     fn spawn_spawner(&mut self, instance: &SpawnerInstance) -> Entity {
         self.world.spawn((
             Transform { position: Vec3::from(instance.position), rotation: Quat::IDENTITY, scale: Vec3::ONE },
@@ -2536,8 +2535,8 @@ impl Sandbox {
 
     /// Reconstructs a `LevelObject` for a single entity — the same
     /// per-entity logic `build_level_from_ecs`'s main loop uses, factored
-    /// out so it's also reusable by "duplicate selected"
-    /// (`duplicate_selected`). Returns `None` if `entity` has no
+    /// out so other callers can reuse it.
+    /// Returns `None` if `entity` has no
     /// `Transform`/`LevelObjectMeta` (e.g. it's a light or particle
     /// emitter, which have their own reconstruction below).
     fn level_object_from_entity(&self, entity: Entity) -> Option<LevelObject> {
@@ -2701,7 +2700,7 @@ impl Sandbox {
     /// Snapshots the currently-loaded level's live ECS state back into
     /// `self.levels`'s cached entry for it (the same `build_level_from_ecs`
     /// round-trip `push_undo_snapshot`/`save_current_level` already use) —
-    /// call this just before switching to a *different* level (F2 "Load"
+    /// call this just before switching to a *different* level (Level-tab "Load"
     /// click, or a trigger's level transition). `self.levels` is otherwise
     /// only populated once at boot, so without this, any in-session edit
     /// that was never explicitly saved to disk (e.g. an assigned character
@@ -2936,7 +2935,7 @@ impl Sandbox {
         }
     }
 
-    /// F2 "Assign Music..." — picks an audio file, starts it looping
+    /// Level-tab "Assign Music..." — picks an audio file, starts it looping
     /// immediately (so the change is audible right away, matching how
     /// "Assign Texture..." updates the live entity), and records it as
     /// `current_music_path` so it round-trips when the level is saved.
@@ -3137,7 +3136,7 @@ impl Sandbox {
                 // Tag every character/dynamic prop already in the level
                 // too, so they show up in `named_net_ids` for clients that
                 // join afterward and in the periodic `Snapshot` broadcast.
-                // New ones can only appear afterward via a spawner (F2
+                // New ones can only appear afterward via a spawner (editor
                 // editing is Edit-mode-only, mutually exclusive with this
                 // Play-mode-only panel) — those get tagged individually as
                 // they spawn instead, via `assign_net_id_if_hosting`.
@@ -3234,7 +3233,7 @@ impl Sandbox {
 
     /// Appearance panel's "Import New Model..." — reuses
     /// `import_gltf_as_rig_asset` (the same glTF-to-`RigAsset` pipeline as
-    /// the F2 editor's "Import glTF as Rig...") but, instead of placing a
+    /// the Create tab's "Import glTF as Rig...") but, instead of placing a
     /// level instance, adopts the result as the local player's own
     /// appearance via `select_appearance`.
     fn pick_new_appearance_model(&mut self) {
@@ -4369,7 +4368,7 @@ impl Sandbox {
     }
 
     /// Spawns a transient, self-cleaning burst of particles at `position` —
-    /// no `LevelObjectMeta` (so it never shows up in Scene Objects or gets
+    /// no `LevelObjectMeta` (so it never shows up as a level object or gets
     /// saved as level data) and no mesh/texture of its own, just a
     /// `ParticleEmitter` that `engine::particles::step` despawns once every
     /// particle it made has aged out (see `Game::update`). Ties particles +
@@ -5864,7 +5863,7 @@ impl Sandbox {
         Some(self.rigs.len() - 1)
     }
 
-    /// F2 "Import glTF as Rig..." — see `import_gltf_as_rig_asset` for the
+    /// Create-tab "Import glTF as Rig..." — see `import_gltf_as_rig_asset` for the
     /// actual glTF-to-`RigAsset` conversion; this just also places a new
     /// level instance of the result, immediately usable via the existing
     /// "Add instance of" list, same as any hand-authored rig.
@@ -6868,8 +6867,8 @@ impl Sandbox {
 
 impl Sandbox {
     /// Applies a thumbnail picked in the texture asset browser to whatever
-    /// opened it (`pending_texture_pick`). Used by both the F1/F2 overlay
-    /// and the docked editor.
+    /// opened it (`pending_texture_pick`). Used by the docked editor
+    /// (Browse Texture, dropped images).
     fn apply_picked_texture(&mut self, gl: &glow::Context, path: PathBuf) {
         match self.pending_texture_pick.take() {
             Some(PendingTexturePick::ForEntity(entity)) => {
@@ -6918,7 +6917,7 @@ impl Sandbox {
 
 impl Sandbox {
     /// The multiplayer and player-appearance windows shown while paused in
-    /// Play. Shared by the F1/F2 overlay and the docked editor.
+    /// Play. Shared by the game's own overlay and the docked editor.
     fn draw_pause_side_panels(
         &mut self,
         egui_ctx: &egui::Context,

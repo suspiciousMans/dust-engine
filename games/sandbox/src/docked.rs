@@ -238,6 +238,7 @@ impl Sandbox {
             let d = self.docked.as_mut().unwrap();
             d.rt.open = true;
             d.rt.state.mode = ShellMode::Edit;
+            log::info!("docked editor opened");
         } else {
             if self.mode == EditorMode::Play {
                 self.exit_play_mode(ctx);
@@ -248,6 +249,7 @@ impl Sandbox {
             d.rt.state.stop();
             d.rt.open = false;
             d.rt.save_layout();
+            log::info!("docked editor closed");
         }
         let _ = ctx.platform.sdl.mouse().set_relative_mouse_mode(false);
     }
@@ -461,7 +463,7 @@ impl Sandbox {
         }
     }
 
-    /// Every entity id is stale after `apply_level` (level load, legacy undo,
+    /// Every entity id is stale after `apply_level` (level load, panel snapshot undo,
     /// Stop): drop what refers to them.
     fn sync_generation(&mut self, state: &mut EditorState, b: &mut Bridge) {
         if b.seen_generation == self.level_generation {
@@ -1063,10 +1065,10 @@ mod tests {
         assert!((half_extents - Vec3::new(1.0, 0.5, 2.0)).abs().max_element() < 1e-4, "got {half_extents:?}");
         drop(meta);
 
-        // The F2 panel renaming the metadata flows back to the hierarchy.
-        game.world.get::<&mut LevelObjectMeta>(e).unwrap().name = "FromF2".into();
+        // The Selected tab renaming the metadata flows back to the hierarchy.
+        game.world.get::<&mut LevelObjectMeta>(e).unwrap().name = "FromPanel".into();
         game.sync_components(&mut bridge);
-        assert_eq!(game.world.get::<&Name>(e).unwrap().0, "FromF2");
+        assert_eq!(game.world.get::<&Name>(e).unwrap().0, "FromPanel");
     }
 
     #[test]
@@ -1153,11 +1155,11 @@ mod tests {
 
         state.selection.select_only(a);
         game.sync_selection(&mut state, &mut bridge);
-        assert_eq!(game.selected_entity, Some(a), "viewport pick shows up in the F2 panel");
+        assert_eq!(game.selected_entity, Some(a), "viewport pick shows up in the Selected tab");
 
-        game.selected_entity = Some(b); // click in the F2 outliner
+        game.selected_entity = Some(b); // pick made from the editor side
         game.sync_selection(&mut state, &mut bridge);
-        assert_eq!(state.selection.primary(), Some(b), "F2 pick selects in the shell");
+        assert_eq!(state.selection.primary(), Some(b), "panel-side pick selects in the shell");
         game.sync_selection(&mut state, &mut bridge);
         assert_eq!(game.selected_entity, Some(b), "stable when nothing changed");
     }
