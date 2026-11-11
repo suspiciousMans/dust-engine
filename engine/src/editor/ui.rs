@@ -421,6 +421,7 @@ fn draw_row(
         });
     });
 
+    super::asset_drop::note_hierarchy_row(ui, row.response.rect, e, pointer);
     // Drop indicator / target detection over the whole row.
     if let (Some(dr), Some(p)) = (dragging, pointer) {
         let rect = row.response.rect;

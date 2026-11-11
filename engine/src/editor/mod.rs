@@ -5,11 +5,14 @@
 //! functions in [`ui`] is unit-testable headless (and even `ui` is tested
 //! against a bare `egui::Context`).
 
+pub mod asset_drop;
+pub mod asset_tab;
 pub mod bounds;
 pub mod cam_matrices;
 pub mod camera;
 pub mod command;
 pub mod console;
+pub mod designer_tab;
 pub mod gizmo;
 pub mod interaction;
 pub mod modal;

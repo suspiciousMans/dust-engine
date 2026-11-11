@@ -16,7 +16,9 @@ use glow::HasContext;
 use hecs::World;
 use sdl2::event::Event;
 
+use super::asset_tab::AssetsPanel;
 use super::cam_matrices::CameraMatrices;
+use super::designer_tab::DesignerTab;
 use super::inspector::Registry;
 use super::interaction::{ViewportEvent, ViewportInput, ViewportInteraction};
 use super::shell::{EditorShell, PerfSnapshot, ShellHost, ViewportImage};
@@ -28,10 +30,14 @@ use crate::ui::EguiState;
 pub struct NoHost;
 impl ShellHost for NoHost {}
 
-/// Adds the viewport image to whatever host the game passes in.
+/// Adds the viewport image and the built-in Assets / UI Designer tab content
+/// to whatever host the game passes in. The host's own `tab_ui` wins: the
+/// built-ins are used only when it returns `false`.
 struct WithImage<'a> {
     image: Option<ViewportImage>,
     inner: &'a mut dyn ShellHost,
+    assets: &'a mut AssetsPanel,
+    designer: &'a mut DesignerTab,
 }
 
 impl ShellHost for WithImage<'_> {
@@ -39,7 +45,23 @@ impl ShellHost for WithImage<'_> {
         self.image
     }
     fn tab_ui(&mut self, tab: &crate::ui::EditorTab, world: &mut World, ui: &mut egui::Ui) -> bool {
-        self.inner.tab_ui(tab, world, ui)
+        if self.inner.tab_ui(tab, world, ui) {
+            return true;
+        }
+        match tab {
+            crate::ui::EditorTab::Assets => {
+                self.assets.draw(ui);
+                true
+            }
+            crate::ui::EditorTab::UiDesigner => {
+                self.designer.draw(ui);
+                true
+            }
+            _ => false,
+        }
+    }
+    fn accepts_asset_drop(&mut self, path: &std::path::Path) -> bool {
+        self.inner.accepts_asset_drop(path)
     }
     fn selection_bounds(&mut self, world: &World, selection: &[hecs::Entity]) -> Option<(glam::Vec3, glam::Vec3)> {
         self.inner.selection_bounds(world, selection)
@@ -57,6 +79,12 @@ pub struct EditorRuntime {
     pub interaction: ViewportInteraction,
     /// Editor on/off. When off the game runs as a plain game.
     pub open: bool,
+    /// Built-in content of the Assets tab (used when the host's `tab_ui`
+    /// declines it). Configure with [`Self::set_asset_root`].
+    pub assets: AssetsPanel,
+    /// Built-in content of the UI Designer tab. Configure with
+    /// [`Self::set_ui_dir`].
+    pub designer: DesignerTab,
     config_dir: Option<PathBuf>,
 }
 
@@ -74,8 +102,33 @@ impl EditorRuntime {
             target: ViewportTarget::default(),
             interaction: ViewportInteraction::new(),
             open: false,
+            assets: AssetsPanel::default(),
+            designer: DesignerTab::default(),
             config_dir,
         })
+    }
+
+    /// Folder the Assets tab browses (`None`, the default, shows an empty state).
+    pub fn set_asset_root(&mut self, root: Option<PathBuf>) {
+        self.assets.set_root(root);
+    }
+
+    /// Folder of `.ron` UI documents the UI Designer tab opens and saves to
+    /// (`None`, the default: only the built-in examples).
+    pub fn set_ui_dir(&mut self, dir: Option<PathBuf>) {
+        self.designer.set_dir(dir);
+    }
+
+    /// Builder form of [`Self::set_asset_root`].
+    pub fn with_asset_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.set_asset_root(Some(root.into()));
+        self
+    }
+
+    /// Builder form of [`Self::set_ui_dir`].
+    pub fn with_ui_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.set_ui_dir(Some(dir.into()));
+        self
     }
 
     pub fn handle_event(&mut self, event: &Event) {
@@ -135,12 +188,18 @@ impl EditorRuntime {
         }
         self.shell.perf = perf;
         let image = self.target.image();
-        let Self { egui, shell, state, interaction, .. } = self;
+        // Two-phase thumbnail loading: GL upload + egui registration must
+        // happen before `egui.run` takes the exclusive borrow.
+        self.assets.browser.ensure_thumbnails_loaded(gl, &mut self.egui);
+        let Self { egui, shell, state, interaction, assets, designer, .. } = self;
         let mut scale = 1.0;
         let mut events = Vec::new();
         let output = egui.run(drawable, |ctx| {
-            let mut host = WithImage { image, inner: host };
+            let mut host = WithImage { image, inner: host, assets, designer };
             scale = shell.ui(ctx, state, world, &mut host);
+            for path in host.assets.take_opened() {
+                shell.push_event(super::shell::ShellEvent::AssetOpened(path));
+            }
             if let Some(rect) = shell.viewport.rect {
                 host.viewport_overlay(ctx, rect, world);
                 let aspect = rect.width() / rect.height().max(1.0);

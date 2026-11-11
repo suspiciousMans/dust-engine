@@ -48,6 +48,12 @@ pub trait ShellHost {
     /// rect (`viewport`, in egui points). For game overlays that belong on the
     /// scene image (HUD, pause menu, dialogue choices): draw with `ctx`.
     fn viewport_overlay(&mut self, _ctx: &egui::Context, _viewport: egui::Rect, _world: &mut World) {}
+    /// Whether an asset dragged from the Assets tab may be dropped on the
+    /// viewport / hierarchy. When `false` the drop is ignored and no
+    /// `ShellEvent::AssetDropped` is emitted. Default: accept everything.
+    fn accepts_asset_drop(&mut self, _path: &std::path::Path) -> bool {
+        true
+    }
 }
 
 /// Fallback bounds: each entity is a unit box scaled by its `Transform`.
@@ -85,7 +91,7 @@ pub struct PerfSnapshot {
 }
 
 /// Things the host may need to react to, drained with [`EditorShell::take_events`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ShellEvent {
     PlayStarted,
     Paused,
@@ -95,6 +101,14 @@ pub enum ShellEvent {
     SceneNew,
     SceneOpened(std::path::PathBuf),
     SceneSaved(std::path::PathBuf),
+    /// An asset was double-clicked in the Assets tab (absolute path).
+    AssetOpened(std::path::PathBuf),
+    /// An asset was dragged from the Assets tab and released over the
+    /// viewport or the hierarchy. `path` is the asset root joined with the
+    /// asset's relative path. `target` is the entity under the cursor
+    /// (viewport pick, or the hierarchy row). `world_pos` is the point the
+    /// editor-camera ray hits on the `y = 0` plane (viewport drops only).
+    AssetDropped { path: std::path::PathBuf, target: Option<Entity>, world_pos: Option<Vec3> },
 }
 
 /// Pending File > Open / Save As path prompt.
@@ -169,6 +183,12 @@ impl EditorShell {
     pub fn apply_preset(&mut self, p: LayoutPreset) {
         self.prefs.layout_preset = p;
         self.dock = dock_skeleton::build_layout(p, &self.host_tabs);
+    }
+
+    /// Queues an event for the host (used by built-in tab content owned
+    /// outside the shell, e.g. the runtime's Assets panel).
+    pub fn push_event(&mut self, event: ShellEvent) {
+        self.events.push(event);
     }
 
     pub fn take_events(&mut self) -> Vec<ShellEvent> {
@@ -459,6 +479,7 @@ impl EditorShell {
             perf: &self.perf,
             prefs: &mut self.prefs,
             preset_request: None,
+            events: &mut self.events,
         };
         viewer.viewport.hovered = false;
         DockArea::new(&mut self.dock).style(style).show(ctx, &mut viewer);
@@ -466,6 +487,7 @@ impl EditorShell {
         if let Some(p) = preset {
             self.apply_preset(p);
         }
+        super::asset_tab::paint_drag_ghost(ctx);
         self.prefs.ui_scale
     }
 }
@@ -480,6 +502,7 @@ struct ShellViewer<'a> {
     perf: &'a PerfSnapshot,
     prefs: &'a mut EditorPrefs,
     preset_request: Option<LayoutPreset>,
+    events: &'a mut Vec<ShellEvent>,
 }
 
 impl TabViewer for ShellViewer<'_> {
@@ -503,7 +526,15 @@ impl TabViewer for ShellViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut EditorTab) {
         match tab {
-            EditorTab::Hierarchy => draw_hierarchy(ui, self.editor, self.world),
+            EditorTab::Hierarchy => {
+                let (editor, world) = (&mut *self.editor, &mut *self.world);
+                let dropped = super::asset_drop::with_hierarchy_drop(ui, |ui| draw_hierarchy(ui, editor, world));
+                if let Some((drag, target)) = dropped {
+                    if self.host.accepts_asset_drop(&drag.path) {
+                        self.events.push(super::asset_drop::hierarchy_drop_event(drag.path, target));
+                    }
+                }
+            }
             EditorTab::Inspector => draw_inspector(ui, self.editor, self.world),
             EditorTab::Viewport => self.viewport_ui(ui),
             EditorTab::Console => self.console.ui(ui),
@@ -553,7 +584,38 @@ impl ShellViewer<'_> {
                 );
             }
         }
+        if super::asset_tab::is_dragging_asset(ui.ctx()) {
+            self.viewport.hovered = false;
+            self.asset_drop_ui(ui, &resp, rect);
+            return;
+        }
         self.drive_camera(ui, &resp, rect);
+    }
+
+    /// Feedback while an asset is dragged over the viewport, and the drop itself.
+    fn asset_drop_ui(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect) {
+        let aspect = rect.width() / rect.height().max(1.0);
+        let (view, proj) = (self.camera.view_matrix(), self.camera.projection_matrix(aspect));
+        if let Some(cursor) = resp.dnd_hover_payload::<super::asset_tab::AssetDrag>().and_then(|_| ui.input(|i| i.pointer.interact_pos())) {
+            let stroke = egui::Stroke::new(2.0_f32, ui.visuals().selection.stroke.color);
+            ui.painter().rect_stroke(rect.shrink(1.0), 0.0, stroke);
+            if let Some(p) = super::asset_drop::ground_point(cursor, rect, view, proj) {
+                ui.painter().circle_stroke(cursor, 5.0, stroke);
+                ui.painter().text(
+                    cursor + egui::vec2(10.0, -14.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    format!("{:.1}, {:.1}", p.x, p.z),
+                    egui::FontId::proportional(11.0),
+                    ui.visuals().selection.stroke.color,
+                );
+            }
+        }
+        if let Some(drag) = resp.dnd_release_payload::<super::asset_tab::AssetDrag>() {
+            let Some(cursor) = ui.input(|i| i.pointer.interact_pos()) else { return };
+            if self.host.accepts_asset_drop(&drag.path) {
+                self.events.push(super::asset_drop::viewport_drop_event(drag.path.clone(), cursor, rect, view, proj, self.world));
+            }
+        }
     }
 
     fn drive_camera(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect) {
