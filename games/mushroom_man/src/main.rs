@@ -43,6 +43,11 @@ use engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
 use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
 
+// The docked editor (F4): engine `EditorRuntime` hosted next to the original
+// F1/F2/F3/F5 dev editor. See the module docs.
+mod docked;
+use docked::DockedState;
+
 fn default_demo_profiles() -> Vec<ShaderProfile> {
     let make = |name: &str, render: RenderParams| ShaderProfile {
         name: name.to_string(),
@@ -160,6 +165,7 @@ impl MushroomKind {
 /// the established "attach a native-only extra component after the generic
 /// spawn" pattern, since which mushroom kind an entity is isn't part of
 /// `LevelObject`'s generic schema (it's recovered from the object's class).
+#[derive(Clone)]
 struct MushroomPickup(MushroomKind);
 
 /// Recognizes a spawned object's resolved `class` as one of the three
@@ -997,6 +1003,7 @@ struct RigRoot {
 /// Tags an entity spawned from an `engine::class::ObjectClass` so
 /// "Apply to All Instances" can find every member of a class, and so
 /// `build_level_from_ecs` can write `LevelObject::class` back out.
+#[derive(Clone)]
 struct ClassMember {
     class_path: PathBuf,
 }
@@ -1286,6 +1293,8 @@ struct Sandbox {
     net_reconnect_attempts_left: u32,
     /// Seconds until the next automatic reconnect attempt.
     net_reconnect_timer: f32,
+    /// F4 docked editor (engine `EditorRuntime`); inert in release builds.
+    docked: DockedState,
 }
 
 /// Which side of a listen-server multiplayer session `Sandbox` is
@@ -1394,6 +1403,7 @@ impl Sandbox {
             remote_level_switch_permission: HashMap::new(),
             net_reconnect_attempts_left: 0,
             net_reconnect_timer: 0.0,
+            docked: DockedState::default(),
             audio: match AudioContext::new() {
                 Ok(audio) => Some(audio),
                 Err(err) => {
@@ -2317,6 +2327,8 @@ impl Sandbox {
 
     fn apply_level(&mut self, gl: &glow::Context, level: &Level) -> anyhow::Result<()> {
         self.world.clear();
+        // Every entity id is stale now; the docked editor drops selection/undo.
+        self.docked.world_rebuilt = true;
         self.selected_entity = None;
         self.selected_rig = None;
         self.selected_rig_part = None;
@@ -2648,26 +2660,7 @@ impl Sandbox {
 
     /// Sibling to `level_object_from_entity` for a placed character.
     fn character_instance_from_entity(&self, entity: Entity) -> Option<CharacterInstance> {
-        let mut query = self.world.query_one::<(&Transform, &CharacterMeta)>(entity).ok()?;
-        let (transform, meta) = query.get()?;
-        let max_health = self.world.get::<&Health>(entity).ok().map(|health| health.max);
-        let dialogue_nodes = self.world.get::<&Dialogue>(entity).map(|d| d.nodes.clone()).unwrap_or_default();
-        Some(CharacterInstance {
-            name: meta.name.clone(),
-            position: transform.position.to_array(),
-            scale: transform.scale.to_array(),
-            color: meta.color,
-            texture_path: meta.texture_path.clone(),
-            disposition: meta.disposition,
-            move_speed: meta.move_speed,
-            wander_radius: meta.wander_radius,
-            sight_range: meta.sight_range,
-            max_health,
-            damage: meta.damage,
-            attack_range: meta.attack_range,
-            attack_cooldown_secs: meta.attack_cooldown_secs,
-            dialogue_nodes,
-        })
+        docked::character_instance_of(&self.world, entity)
     }
 
     fn build_level_from_ecs(&self) -> Level {
@@ -4124,6 +4117,9 @@ impl Sandbox {
     /// same world-space direction to the host via `ClientMessage::Input`
     /// instead of re-deriving movement from raw key state a second way.
     fn compute_move_dir(&self, ctx: &Context) -> Vec3 {
+        if self.docked_input_blocked() {
+            return Vec3::ZERO;
+        }
         let forward = self.fp_camera.forward();
         let right = self.fp_camera.right();
         // Flatten to the horizontal plane so looking up/down doesn't change ground speed.
@@ -4165,8 +4161,9 @@ impl Sandbox {
         // is actually being used drives the camera, no mode switch needed.
         // `CONTROLLER_LOOK_SPEED` is in radians/sec at full stick deflection.
         const CONTROLLER_LOOK_SPEED: f32 = 2.5;
-        let (mouse_dx, mouse_dy) = ctx.input.mouse_delta();
-        let (right_stick_x, right_stick_y) = ctx.input.right_stick();
+        let blocked = self.docked_input_blocked();
+        let (mouse_dx, mouse_dy) = if blocked { (0, 0) } else { ctx.input.mouse_delta() };
+        let (right_stick_x, right_stick_y) = if blocked { (0.0, 0.0) } else { ctx.input.right_stick() };
         self.fp_camera.look(
             mouse_dx as f32 * 0.0025 + right_stick_x * CONTROLLER_LOOK_SPEED * dt,
             -mouse_dy as f32 * 0.0025 - right_stick_y * CONTROLLER_LOOK_SPEED * dt,
@@ -4240,8 +4237,9 @@ impl Sandbox {
                 self.speed_fov.update(horizontal_velocity.length(), dt);
                 self.fp_camera.fov_y_radians = self.base_fov_radians + self.speed_fov.kick_radians();
 
-                let jump_pressed = ctx.input.just_pressed(Keycode::Space)
-                    || ctx.input.controller_just_pressed(ControllerButton::A);
+                let jump_pressed = !blocked
+                    && (ctx.input.just_pressed(Keycode::Space)
+                        || ctx.input.controller_just_pressed(ControllerButton::A));
                 if jump_pressed && body.grounded {
                     body.velocity.y = controller.jump_speed;
                     jumped = true;
@@ -7123,12 +7121,18 @@ impl Game for Sandbox {
                     None
                 }
             };
+            self.init_docked(ctx)?;
         }
 
         Ok(())
     }
 
     fn handle_event(&mut self, ctx: &mut Context, event: &Event) {
+        // F4 docked editor: it owns input while open (returns true if it
+        // consumed the event); the legacy handler below is for F1/F2/F3 mode.
+        if self.docked_handle_event(ctx, event) {
+            return;
+        }
         if let Some(ui) = self.ui.as_mut() {
             ui.handle_event(event);
         }
@@ -7313,7 +7317,11 @@ impl Game for Sandbox {
         // the pause menu.
         let paused_in_play = self.mode == EditorMode::Play && self.paused;
         if !paused_in_play {
-            engine::animation::step(&mut self.world, dt);
+            // The docked editor's Edit mode holds animated objects at their
+            // base pose so gizmo edits land on the pose that gets saved.
+            if !self.docked_editing() {
+                engine::animation::step(&mut self.world, dt);
+            }
             // Sample playing rig clips into each part's local rotation, then
             // resolve every rig part's world `Transform` from its parent
             // chain — same "always on, live preview" philosophy, and order
@@ -7333,7 +7341,7 @@ impl Game for Sandbox {
             self.smooth_networked_transforms(dt);
         }
 
-        if self.mode == EditorMode::Edit {
+        if self.mode == EditorMode::Edit && !self.docked.open {
             let ui_wants_keyboard = self.ui.as_ref().map(|ui| ui.wants_keyboard_input()).unwrap_or(false);
             if !ui_wants_keyboard {
                 self.update_editor_camera_input(ctx, dt);
@@ -7565,6 +7573,9 @@ impl Game for Sandbox {
     }
 
     fn render(&mut self, ctx: &mut Context) -> anyhow::Result<()> {
+        if self.docked.open {
+            return self.render_docked(ctx);
+        }
         let drawable_size = ctx.drawable_size();
         let aspect = ctx.aspect_ratio();
         let (view, proj) = match self.mode {
@@ -7577,8 +7588,125 @@ impl Game for Sandbox {
         let params = self.render_params;
 
         let gl = ctx.gl();
+        let draw_calls = self.draw_world(gl, drawable_size, view, proj)?;
         let renderer = self.renderer.as_mut().expect("renderer set up in init");
-        renderer.resize_if_needed(gl, drawable_size)?;
+
+        let (tint_color, tint_strength) = self.screen_effects.current();
+        renderer.present(
+            gl,
+            drawable_size,
+            &PostParams {
+                color_levels: params.color_levels as f32,
+                dither_strength: params.dither_strength,
+                tint_color,
+                tint_strength,
+            },
+        );
+
+        // Debug profiler: average frame time over a short rolling window
+        // (less jittery than a single-frame instantaneous FPS reading).
+        self.frame_times.push_back(ctx.time.delta);
+        while self.frame_times.len() > 30 {
+            self.frame_times.pop_front();
+        }
+        let avg_frame_time = self.frame_times.iter().sum::<f32>() / self.frame_times.len().max(1) as f32;
+        let profiler_stats = engine::ui::ProfilerStats {
+            fps: if avg_frame_time > 0.0 { 1.0 / avg_frame_time } else { 0.0 },
+            frame_time_ms: avg_frame_time * 1000.0,
+            entity_count: self.world.len() as usize,
+            draw_calls,
+        };
+        let profiler_visible = self.profiler_visible;
+
+        // Must happen before `self.ui.take()` below — texture registration
+        // needs `&mut EguiState`, which `ui_state.run`'s closure can't
+        // provide (it's already exclusively borrowed for the closure's
+        // duration). See `AssetBrowserState`'s doc comment.
+        if self.texture_asset_browser.is_open() {
+            if let Some(ui_state) = self.ui.as_mut() {
+                self.texture_asset_browser.ensure_thumbnails_loaded(gl, ui_state);
+            }
+        }
+
+        // Editor overlay, drawn on top of the final (already-pixelated) image
+        // at full window resolution so the UI itself stays crisp.
+        let mut ui_state = self.ui.take().expect("ui set up in init");
+        let editing = editor_available() && self.mode == EditorMode::Edit;
+        let ui_visible = self.ui_visible && editing;
+        let level_ui_visible = self.level_ui_visible && editing;
+        let playing = self.mode == EditorMode::Play;
+        let mut pause_menu_action: Option<PauseMenuAction> = None;
+        let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
+        let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
+        let mut picked_texture: Option<PathBuf> = None;
+        let full_output = ui_state.run(drawable_size, |egui_ctx| {
+            if profiler_visible {
+                engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
+            }
+            if editing {
+                if let Some(path) = self.texture_asset_browser.show(egui_ctx, &self.asset_root) {
+                    picked_texture = Some(path);
+                }
+            }
+            if level_ui_visible {
+                egui::SidePanel::left("level_editor")
+                    .default_width(280.0)
+                    .show(egui_ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            self.draw_level_editor_ui(ui, gl);
+                        });
+                    });
+            }
+            if ui_visible {
+                egui::SidePanel::right("editor")
+                    .default_width(300.0)
+                    .show(egui_ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            self.draw_shader_editor_ui(ui, gl, drawable_size);
+                        });
+                    });
+            }
+            if playing {
+                egui::Area::new("play_mode_indicator".into())
+                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+                    .show(egui_ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            let escape_hint = if self.paused { "Esc to resume" } else { "Esc to pause" };
+                            let f3_hint = if editor_available() { " \u{b7} F3 stop" } else { "" };
+                            ui.label(format!(
+                                "Play Mode \u{2014} {escape_hint}{f3_hint} \u{b7} WASD + mouse \u{b7} Space jump \u{b7} E interact \u{b7} F9 checkpoint \u{b7} F10 load checkpoint"
+                            ));
+                        });
+                    });
+                // HUD only makes sense with a player around to show progress
+                // for — mirrors the play_mode_indicator's own gating. Left
+                // visible (though frozen, see `Game::update`) while paused,
+                // same as the rest of the frozen world behind the menu.
+                draw_hud(egui_ctx, &self.hud, &self.render_params.hud);
+                self.draw_dialogue_choices(egui_ctx);
+                if self.paused {
+                    pause_menu_action = draw_pause_menu(egui_ctx, editor_available());
+                    (multiplayer_action, appearance_action) = self.draw_net_panels(egui_ctx);
+                }
+            }
+        });
+        ui_state.paint(drawable_size, full_output);
+        self.ui = Some(ui_state);
+
+        self.apply_ui_actions(ctx, picked_texture, pause_menu_action, multiplayer_action, appearance_action);
+
+        Ok(())
+    }
+}
+
+impl Sandbox {
+    /// Skybox, level meshes and particles into the renderer's scene target at
+    /// `size` pixels, seen through `view`/`proj`. Returns the draw-call count.
+    /// Shared by the full-window `render` and the docked editor's viewport.
+    fn draw_world(&mut self, gl: &glow::Context, size: (u32, u32), view: Mat4, proj: Mat4) -> anyhow::Result<u32> {
+        let params = self.render_params;
+        let renderer = self.renderer.as_mut().expect("renderer set up in init");
+        renderer.resize_if_needed(gl, size)?;
         renderer.begin_scene(gl);
 
         let shader_cache = self
@@ -7715,219 +7843,7 @@ impl Game for Sandbox {
             }
         }
         renderer.draw_particles(gl, &view.to_cols_array(), &proj.to_cols_array(), particle_draws.into_iter());
-
-        let (tint_color, tint_strength) = self.screen_effects.current();
-        renderer.present(
-            gl,
-            drawable_size,
-            &PostParams {
-                color_levels: params.color_levels as f32,
-                dither_strength: params.dither_strength,
-                tint_color,
-                tint_strength,
-            },
-        );
-
-        // Debug profiler: average frame time over a short rolling window
-        // (less jittery than a single-frame instantaneous FPS reading).
-        self.frame_times.push_back(ctx.time.delta);
-        while self.frame_times.len() > 30 {
-            self.frame_times.pop_front();
-        }
-        let avg_frame_time = self.frame_times.iter().sum::<f32>() / self.frame_times.len().max(1) as f32;
-        let profiler_stats = engine::ui::ProfilerStats {
-            fps: if avg_frame_time > 0.0 { 1.0 / avg_frame_time } else { 0.0 },
-            frame_time_ms: avg_frame_time * 1000.0,
-            entity_count: self.world.len() as usize,
-            draw_calls,
-        };
-        let profiler_visible = self.profiler_visible;
-
-        // Must happen before `self.ui.take()` below — texture registration
-        // needs `&mut EguiState`, which `ui_state.run`'s closure can't
-        // provide (it's already exclusively borrowed for the closure's
-        // duration). See `AssetBrowserState`'s doc comment.
-        if self.texture_asset_browser.is_open() {
-            if let Some(ui_state) = self.ui.as_mut() {
-                self.texture_asset_browser.ensure_thumbnails_loaded(gl, ui_state);
-            }
-        }
-
-        // Editor overlay, drawn on top of the final (already-pixelated) image
-        // at full window resolution so the UI itself stays crisp.
-        let mut ui_state = self.ui.take().expect("ui set up in init");
-        let editing = editor_available() && self.mode == EditorMode::Edit;
-        let ui_visible = self.ui_visible && editing;
-        let level_ui_visible = self.level_ui_visible && editing;
-        let playing = self.mode == EditorMode::Play;
-        let mut pause_menu_action: Option<PauseMenuAction> = None;
-        let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
-        let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
-        // Every currently-loaded rig, by name, for the appearance panel's
-        // picker list; the local player's own chosen appearance (if any),
-        // resolved to that same name for highlighting the current
-        // selection — see `find_rig_asset` for the path-to-name lookup.
-        let appearance_rig_names: Vec<String> = self.rigs.iter().map(|rig| rig.name.clone()).collect();
-        let current_appearance_name: Option<String> =
-            self.local_appearance.as_deref().and_then(|path| self.find_rig_asset(path)).map(|rig| rig.name.clone());
-        let net_status_text = self.net_status_text();
-        let net_connected = matches!(self.net_mode, NetMode::Host(_))
-            || matches!(&self.net_mode, NetMode::Client(client) if client.is_connected());
-        // Host-only roster for the multiplayer panel's player list — a
-        // client sees `&[]` (see `draw_multiplayer_panel`'s doc comment).
-        let net_players: Vec<(NetId, String, bool)> = if let NetMode::Host(host) = &self.net_mode {
-            host.connected_ids()
-                .into_iter()
-                .filter_map(|net_id| {
-                    host.player_name(net_id).map(|name| {
-                        let allowed = self.remote_level_switch_permission.get(&net_id).copied().unwrap_or(false);
-                        (net_id, name.to_string(), allowed)
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let mut picked_texture: Option<PathBuf> = None;
-        let full_output = ui_state.run(drawable_size, |egui_ctx| {
-            if profiler_visible {
-                engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
-            }
-            if editing {
-                if let Some(path) = self.texture_asset_browser.show(egui_ctx, &self.asset_root) {
-                    picked_texture = Some(path);
-                }
-            }
-            if level_ui_visible {
-                egui::SidePanel::left("level_editor")
-                    .default_width(280.0)
-                    .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_level_editor_ui(ui, gl);
-                        });
-                    });
-            }
-            if ui_visible {
-                egui::SidePanel::right("editor")
-                    .default_width(300.0)
-                    .show(egui_ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.draw_shader_editor_ui(ui, gl, drawable_size);
-                        });
-                    });
-            }
-            if playing {
-                egui::Area::new("play_mode_indicator".into())
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
-                    .show(egui_ctx, |ui| {
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            let escape_hint = if self.paused { "Esc to resume" } else { "Esc to pause" };
-                            let f3_hint = if editor_available() { " \u{b7} F3 stop" } else { "" };
-                            ui.label(format!(
-                                "Play Mode \u{2014} {escape_hint}{f3_hint} \u{b7} WASD + mouse \u{b7} Space jump \u{b7} E interact \u{b7} F9 checkpoint \u{b7} F10 load checkpoint"
-                            ));
-                        });
-                    });
-                // HUD only makes sense with a player around to show progress
-                // for — mirrors the play_mode_indicator's own gating. Left
-                // visible (though frozen, see `Game::update`) while paused,
-                // same as the rest of the frozen world behind the menu.
-                draw_hud(egui_ctx, &self.hud, &self.render_params.hud);
-                self.draw_dialogue_choices(egui_ctx);
-                if self.paused {
-                    pause_menu_action = draw_pause_menu(egui_ctx, editor_available());
-                    multiplayer_action = engine::ui::draw_multiplayer_panel(
-                        egui_ctx,
-                        &net_status_text,
-                        net_connected,
-                        self.net_reconnect_attempts_left > 0,
-                        &mut self.net_join_address,
-                        &mut self.net_player_name,
-                        &net_players,
-                    );
-                    appearance_action = engine::ui::draw_appearance_panel(
-                        egui_ctx,
-                        current_appearance_name.as_deref(),
-                        &appearance_rig_names,
-                    );
-                }
-            }
-        });
-        ui_state.paint(drawable_size, full_output);
-        self.ui = Some(ui_state);
-
-        if let Some(path) = picked_texture {
-            match self.pending_texture_pick.take() {
-                Some(PendingTexturePick::ForEntity(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                Some(PendingTexturePick::ForClass(index)) => {
-                    if let Some(class) = self.classes.get_mut(index) {
-                        class.texture_path = Some(path);
-                    }
-                }
-                Some(PendingTexturePick::ForCharacter(entity)) => {
-                    match GpuTexture::load_from_file(gl, &self.asset_root.join(&path), TextureFilter::Nearest) {
-                        Ok(texture) => {
-                            let texture = Arc::new(texture);
-                            if let Ok(mut query) =
-                                self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity)
-                            {
-                                if let Some((renderer, meta)) = query.get() {
-                                    renderer.texture = Some(texture);
-                                    meta.texture_path = Some(path.clone());
-                                }
-                            }
-                            log::info!("assigned character texture {path:?} via asset browser");
-                        }
-                        Err(err) => log::error!("failed to load texture {path:?}: {err}"),
-                    }
-                }
-                None => {}
-            }
-        }
-
-        match pause_menu_action {
-            Some(PauseMenuAction::Resume) => self.resume(ctx),
-            Some(PauseMenuAction::ExitToEditor) => self.exit_play_mode(ctx),
-            Some(PauseMenuAction::RestartLevel) => self.restart_level(ctx),
-            Some(PauseMenuAction::QuitGame) => ctx.should_quit = true,
-            None => {}
-        }
-
-        match multiplayer_action {
-            Some(engine::ui::MultiplayerAction::Host) => self.start_hosting(),
-            Some(engine::ui::MultiplayerAction::Join) => self.join_game(),
-            Some(engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
-            Some(engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
-                self.set_level_switch_permission(net_id, allowed);
-            }
-            Some(engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
-            None => {}
-        }
-
-        match appearance_action {
-            Some(engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
-            Some(engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
-            Some(engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
-            None => {}
-        }
-
-        Ok(())
+        Ok(draw_calls)
     }
 }
 

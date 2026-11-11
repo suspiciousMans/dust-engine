@@ -1,0 +1,54 @@
+// Scripted smoke test for the F4 docked editor (debug builds only).
+//
+// Opens the docked editor (F4), presses Play (F3), waits, presses Stop (F3)
+// and closes the editor again. The harness injects these as in-process SDL
+// events; nothing touches the desktop's input. Check the log for:
+//   "entered play mode" ... "exited play mode, restored edit-time state"
+// Run with:
+//   cargo run -p mushroom_man -- --smoke-test scripts/smoke/docked_editor.pss
+
+let phase = 0.0;
+let phase_started_at = 0.0;
+
+fn enter_phase(next) {
+    phase = next;
+    phase_started_at = time();
+    log("entering phase " + next);
+}
+
+fn seconds_in_phase() {
+    return time() - phase_started_at;
+}
+
+fn tick() {
+    if phase == 0.0 {
+        if seconds_in_phase() > 0.5 {
+            press("F4");
+            release("F4");
+            enter_phase(1.0);
+        }
+    } else if phase == 1.0 {
+        if seconds_in_phase() > 1.0 {
+            press("F3");
+            release("F3");
+            enter_phase(2.0);
+        }
+    } else if phase == 2.0 {
+        if seconds_in_phase() > 1.5 {
+            press("F3");
+            release("F3");
+            enter_phase(3.0);
+        }
+    } else if phase == 3.0 {
+        if seconds_in_phase() > 1.0 {
+            press("F4");
+            release("F4");
+            enter_phase(4.0);
+        }
+    } else if phase == 4.0 {
+        if seconds_in_phase() > 0.5 {
+            log("docked editor smoke test passed");
+            finish(true);
+        }
+    }
+}
