@@ -104,6 +104,10 @@ impl OffscreenFramebuffer {
         }
     }
 
+    pub(crate) fn raw(&self) -> glow::Framebuffer {
+        self.fbo
+    }
+
     pub fn bind(&self, gl: &glow::Context) {
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
@@ -116,6 +120,16 @@ impl OffscreenFramebuffer {
     pub unsafe fn destroy(&self, gl: &glow::Context) {
         gl.delete_framebuffer(self.fbo);
         gl.delete_texture(self.color_texture);
+        gl.delete_renderbuffer(self.depth_renderbuffer);
+    }
+
+    /// Frees the framebuffer and depth buffer but NOT the color texture —
+    /// for when something else (egui's painter) took ownership of it.
+    ///
+    /// # Safety
+    /// The framebuffer must not be bound or used after this call.
+    pub unsafe fn destroy_except_texture(&self, gl: &glow::Context) {
+        gl.delete_framebuffer(self.fbo);
         gl.delete_renderbuffer(self.depth_renderbuffer);
     }
 }

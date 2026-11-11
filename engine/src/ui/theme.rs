@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Editor chrome theme — colors for egui panels, dock headers,
 /// toolbar, text, and borders. Serializable so a user can save/load
 /// a theme file later; for now there is no persistence UI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EditorTheme {
     /// Main panel / viewport background.
     pub background: [f32; 3],
@@ -42,6 +42,59 @@ impl EditorTheme {
             font: String::new(),                       // egui default
             font_size: 12.0,
         }
+    }
+
+    /// Fills every colour/size the egui `Visuals` and text styles derive from
+    /// this theme. Call whenever the theme changes (cheap; egui diffs styles).
+    pub fn apply_to_egui(&self, ctx: &egui::Context) {
+        let mut v = egui::Visuals::dark();
+        let fg = self.foreground_color();
+        let muted = self.muted_color();
+        let accent = self.accent_color();
+        let border = self.border_color();
+        let panel = self.panel_color();
+        let bg = self.background_color();
+        let header = self.panel_header_color();
+        v.panel_fill = panel;
+        v.window_fill = panel;
+        v.extreme_bg_color = bg;
+        v.faint_bg_color = header;
+        v.code_bg_color = bg;
+        v.window_stroke = egui::Stroke::new(1.0_f32, border);
+        v.hyperlink_color = accent;
+        v.selection.bg_fill = accent.linear_multiply(0.45);
+        v.selection.stroke = egui::Stroke::new(1.0_f32, accent);
+        v.widgets.noninteractive.bg_fill = panel;
+        v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, border);
+        v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, fg);
+        v.widgets.inactive.bg_fill = header;
+        v.widgets.inactive.weak_bg_fill = header;
+        v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, fg);
+        v.widgets.hovered.bg_fill = header.linear_multiply(1.4);
+        v.widgets.hovered.weak_bg_fill = header.linear_multiply(1.4);
+        v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5_f32, accent);
+        v.widgets.active.bg_fill = accent.linear_multiply(0.6);
+        v.widgets.active.weak_bg_fill = accent.linear_multiply(0.6);
+        v.widgets.active.fg_stroke = egui::Stroke::new(1.5_f32, fg);
+        v.widgets.open.bg_fill = header;
+        v.override_text_color = None;
+        ctx.set_visuals(v);
+        let _ = muted;
+
+        let size = self.font_size.clamp(8.0, 32.0);
+        ctx.style_mut(|s| {
+            use egui::{FontId, TextStyle};
+            let set = |s: &mut egui::Style, ts: TextStyle, k: f32| {
+                if let Some(f) = s.text_styles.get_mut(&ts) {
+                    *f = FontId::new(size * k, f.family.clone());
+                }
+            };
+            set(s, TextStyle::Body, 1.0);
+            set(s, TextStyle::Button, 1.0);
+            set(s, TextStyle::Monospace, 1.0);
+            set(s, TextStyle::Small, 0.8);
+            set(s, TextStyle::Heading, 1.45);
+        });
     }
 
     /// Convert RGB [0..1] to egui Color32.
@@ -88,9 +141,35 @@ impl EditorTheme {
     }
 }
 
+impl Default for EditorTheme {
+    fn default() -> Self {
+        Self::builtin_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_to_egui_sets_visuals_and_font_size() {
+        let ctx = egui::Context::default();
+        let mut t = EditorTheme::builtin_default();
+        t.font_size = 20.0;
+        t.apply_to_egui(&ctx);
+        assert_eq!(ctx.style().visuals.panel_fill, t.panel_color());
+        assert_eq!(ctx.style().visuals.selection.stroke.color, t.accent_color());
+        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].size, 20.0);
+    }
+
+    #[test]
+    fn theme_ron_roundtrip() {
+        let mut t = EditorTheme::builtin_default();
+        t.accent = [0.9, 0.2, 0.1];
+        let s = ron::to_string(&t).unwrap();
+        let back: EditorTheme = ron::from_str(&s).unwrap();
+        assert_eq!(t, back);
+    }
 
     #[test]
     fn test_builtin_theme_is_valid() {

@@ -13,7 +13,7 @@ pub mod theme;
 pub use appearance_panel::{draw_appearance_panel, AppearanceAction};
 pub use asset_browser::AssetBrowserState;
 pub use backend::EguiState;
-pub use dock_skeleton::EditorDocks;
+pub use dock_skeleton::{EditorTab, LayoutPreset};
 pub use hud::draw_hud;
 pub use output::{OutputPanel, scan_for_files};
 pub use multiplayer_panel::{draw_multiplayer_panel, MultiplayerAction};

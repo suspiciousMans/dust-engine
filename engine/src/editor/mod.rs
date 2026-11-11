@@ -7,11 +7,16 @@
 
 pub mod bounds;
 pub mod cam_matrices;
+pub mod camera;
 pub mod command;
+pub mod console;
 pub mod gizmo;
 pub mod interaction;
 pub mod modal;
 pub mod picking;
+pub mod prefs;
+pub mod scene_io;
+pub mod shell;
 pub mod snapping;
 pub mod world_xform;
 pub mod hierarchy;
@@ -19,6 +24,7 @@ pub mod inspector;
 pub mod selection;
 pub mod state;
 pub mod ui;
+pub mod viewport_target;
 
 pub use hierarchy::{Children, Locked, Name, Parent, Primitive, SpawnOrder, Visible};
 pub use inspector::{FieldDesc, FieldKind, Registry, Value};

@@ -48,6 +48,12 @@ impl EguiState {
         self.painter.register_native_texture(texture)
     }
 
+    /// Points an already-registered egui texture id at a new GL texture. The
+    /// painter deletes the previous GL texture itself on the next paint.
+    pub fn replace_texture(&mut self, id: egui::TextureId, texture: glow::Texture) {
+        self.painter.replace_native_texture(id, texture)
+    }
+
     pub fn wants_pointer_input(&self) -> bool {
         self.ctx.wants_pointer_input()
     }
