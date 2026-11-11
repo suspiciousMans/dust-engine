@@ -27,6 +27,7 @@ mod web;
 
 pub use backend::{AudioBackend, LoopBuffer, NullBackend, NullEvent};
 pub use engine::{AudioEngine, TrackHandle, LAYER_TRACK, MUSIC_TRACK};
+pub use mixer::{Bus, BusSettings, Mixer, MixerError, MixerSettings, MixerSettingsError, MASTER_BUS, MUSIC_BUS, SFX_BUS, UI_BUS};
 pub use tracks::{GainFader, LoopClock, Track, TrackBank, TrackId};
 
 #[cfg(not(target_os = "emscripten"))]

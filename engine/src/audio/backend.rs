@@ -74,6 +74,53 @@ pub trait AudioBackend {
     );
     fn set_track_volume(&mut self, id: TrackId, volume: f32);
     fn stop_track(&mut self, id: TrackId);
+
+    // ---- optional spatial / metering capabilities ------------------------
+    //
+    // Additive, default-bodied methods: a backend that cannot do these keeps
+    // working (spatial voices then get distance gain only) and existing
+    // implementors need no change.
+
+    /// Starts a track that will be panned: like `start_track`, plus initial
+    /// per-channel gains. A backend that can pan should override this so a
+    /// mono source is routed to two output channels from the first sample.
+    /// The default starts the track and calls `set_track_pan`.
+    #[allow(clippy::too_many_arguments)]
+    fn start_track_panned(
+        &mut self,
+        id: TrackId,
+        buffer: &LoopBuffer,
+        looped: bool,
+        start_secs: f32,
+        volume: f32,
+        fade_in_secs: f32,
+        left: f32,
+        right: f32,
+    ) {
+        self.start_track(id, buffer, looped, start_secs, volume, fade_in_secs);
+        self.set_track_pan(id, left, right);
+    }
+
+    /// Per-channel gain multipliers for a track started with
+    /// `start_track_panned` (`(1, 1)` = unpanned; the engine passes the
+    /// equal-power pair from `spatial::pan_gains`, `left^2 + right^2 == 1`).
+    /// Default: ignored ("gain/distance only").
+    fn set_track_pan(&mut self, _id: TrackId, _left: f32, _right: f32) {}
+
+    /// Playback-rate multiplier (doppler). 1 = normal. Default: ignored.
+    fn set_track_pitch(&mut self, _id: TrackId, _pitch: f32) {}
+
+    /// Peak output level (0..=1) of a track since the last call, if this
+    /// backend can measure it. Default `None`: the mixer UI then shows gains
+    /// only.
+    fn track_level(&self, _id: TrackId) -> Option<f32> {
+        None
+    }
+
+    /// Whether `set_track_pan` does anything on this backend.
+    fn supports_pan(&self) -> bool {
+        false
+    }
 }
 
 /// One thing a `NullBackend` was asked to do.
@@ -84,6 +131,8 @@ pub enum NullEvent {
     Start { id: TrackId, looped: bool, start_secs: f32, volume: f32, fade_in_secs: f32 },
     Volume { id: TrackId, volume: f32 },
     Stop { id: TrackId },
+    Pan { id: TrackId, left: f32, right: f32 },
+    Pitch { id: TrackId, pitch: f32 },
 }
 
 /// Plays nothing and records what it was asked to. Needs no audio device.
@@ -92,6 +141,16 @@ pub struct NullBackend {
     pub events: Vec<NullEvent>,
     /// Currently-playing tracks and their last volume.
     pub playing: HashMap<TrackId, f32>,
+    /// Last pan (left, right) per playing track.
+    pub pans: HashMap<TrackId, (f32, f32)>,
+    /// Last pitch per playing track.
+    pub pitches: HashMap<TrackId, f32>,
+    /// Levels `track_level` reports; set from tests to drive meters.
+    pub levels: HashMap<TrackId, f32>,
+    /// Fire-and-forget one-shots, in call order: (frames, volume).
+    pub oneshots: std::cell::RefCell<Vec<(usize, f32)>>,
+    /// `play_tone` calls, in order: (frequency_hz, volume).
+    pub tones: std::cell::RefCell<Vec<(f32, f32)>>,
 }
 
 impl NullBackend {
@@ -101,6 +160,14 @@ impl NullBackend {
 
     pub fn volume(&self, id: TrackId) -> Option<f32> {
         self.playing.get(&id).copied()
+    }
+
+    pub fn pan(&self, id: TrackId) -> Option<(f32, f32)> {
+        self.pans.get(&id).copied()
+    }
+
+    pub fn pitch(&self, id: TrackId) -> Option<f32> {
+        self.pitches.get(&id).copied()
     }
 }
 
@@ -113,9 +180,13 @@ impl AudioBackend for NullBackend {
         Ok(())
     }
 
-    fn play_tone(&self, _frequency_hz: f32, _duration_secs: f32, _volume: f32) {}
+    fn play_tone(&self, frequency_hz: f32, _duration_secs: f32, volume: f32) {
+        self.tones.borrow_mut().push((frequency_hz, volume));
+    }
 
-    fn play_oneshot(&self, _samples: &[f32], _sample_rate: u32, _volume: f32) {}
+    fn play_oneshot(&self, samples: &[f32], _sample_rate: u32, volume: f32) {
+        self.oneshots.borrow_mut().push((samples.len(), volume));
+    }
 
     fn start_track(&mut self, id: TrackId, buffer: &LoopBuffer, looped: bool, start_secs: f32, volume: f32, fade_in_secs: f32) {
         let _ = buffer;
@@ -133,5 +204,25 @@ impl AudioBackend for NullBackend {
     fn stop_track(&mut self, id: TrackId) {
         self.events.push(NullEvent::Stop { id });
         self.playing.remove(&id);
+        self.pans.remove(&id);
+        self.pitches.remove(&id);
+    }
+
+    fn set_track_pan(&mut self, id: TrackId, left: f32, right: f32) {
+        self.events.push(NullEvent::Pan { id, left, right });
+        self.pans.insert(id, (left, right));
+    }
+
+    fn set_track_pitch(&mut self, id: TrackId, pitch: f32) {
+        self.events.push(NullEvent::Pitch { id, pitch });
+        self.pitches.insert(id, pitch);
+    }
+
+    fn track_level(&self, id: TrackId) -> Option<f32> {
+        self.levels.get(&id).copied()
+    }
+
+    fn supports_pan(&self) -> bool {
+        true
     }
 }
