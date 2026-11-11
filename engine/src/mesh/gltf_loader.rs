@@ -141,7 +141,7 @@ pub fn load_gltf(path: &Path) -> anyhow::Result<GltfScene> {
 /// 16-bit/float formats glTF allows but which a typical color texture
 /// never actually uses — rather than guess at a lossy downcast, the
 /// caller just skips the texture (logged) and the mesh imports untextured.
-fn to_rgba8(pixels: &[u8], format: gltf::image::Format) -> Option<Vec<u8>> {
+pub(crate) fn to_rgba8(pixels: &[u8], format: gltf::image::Format) -> Option<Vec<u8>> {
     use gltf::image::Format;
     match format {
         Format::R8G8B8A8 => Some(pixels.to_vec()),

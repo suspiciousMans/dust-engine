@@ -526,7 +526,7 @@ impl SkeletalAnimator {
             return;
         }
         let dt = if dt.is_finite() { dt.max(0.0) * self.speed.max(0.0) } else { 0.0 };
-        let mut delta = RootMotionDelta::ZERO;
+        let delta;
 
         let (cur_delta, cur) = self.advance(self.current, dt);
         self.current = cur;
@@ -539,8 +539,6 @@ impl SkeletalAnimator {
             if tr.elapsed >= tr.duration {
                 self.current = tr.to;
                 self.transition = None;
-                // the finished fade's last step already belongs entirely to `to`
-                delta = to_delta;
             } else {
                 self.transition = Some(tr);
             }

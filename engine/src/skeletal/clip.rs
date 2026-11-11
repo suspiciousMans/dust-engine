@@ -7,7 +7,7 @@ use glam::{Quat, Vec3};
 use super::pose::{slerp_shortest, JointTransform, Pose};
 use super::skeleton::Skeleton;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Interpolation {
     /// Lerp for vectors, slerp (shortest arc) for rotations.
     #[default]
