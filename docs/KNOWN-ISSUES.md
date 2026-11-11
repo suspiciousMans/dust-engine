@@ -17,6 +17,8 @@ Updated 2026-11-11 after merging the legacy-editor retirement in all three games
 | `new_game.sh` / `package.sh` (bash) exist alongside the PowerShell scripts; `new_game.sh` was checked by scaffolding a copy and `cargo check`ing it, `package.sh` only by `bash -n` and a dry run. No web (emscripten) packaging: no build recipe is documented in the repo | Stage 5 | `new_game.sh`, `package.sh` |
 | CI has Windows and Linux jobs (`.github/workflows/ci.yml`; the Linux job was validated as YAML only, never run on GitHub); web is not gated | Stage 0 | |
 | `cargo clippy --workspace` reports ~100 style warnings (not gated) | Stage 0 | mostly `map_or`, complex types |
+| Directional shadows (`engine::renderer` shadow map) are OPT-IN and only wired in `physics-sandbox` (`DUST_SHADOWS=1|ps2`); the other games and the default shaders are unchanged. One light, no cascades, no point-light shadows. Seen once on a live Wayland window (PCF mode): cube shadows visible on the ground, with some stair-stepping on shadowed cube faces; `ps2`/dithered mode, editor Shadows section clicks and other GPUs not hand-verified | Stage 5 | GUIDE.md "Shadows" |
+| PBR-lite (metallic/roughness, normal maps, specular) is NOT done: lighting is still per-vertex Lambert | Stage 5 | |
 
 ## Editor
 

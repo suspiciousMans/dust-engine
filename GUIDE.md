@@ -190,6 +190,76 @@ doesn't guarantee zero interpenetration, so this happens in practice).
 keep their exact old look; the checkbox lives in the F1 panel's
 **Geometry / Texturing** section, right under "Affine texture mapping".
 
+## Shadows
+
+Opt-in directional shadow map for the mesh shader (a single sun-style light).
+**Off by default**: a game that never calls `set_shadow_settings` keeps
+byte-identical shaders and allocates nothing. Rendering is a depth pass from
+the light into a square map, then a lookup in the mesh fragment shader that
+darkens the final colour by `1 - strength * facing * (1 - lit)`.
+
+```rust
+use engine::renderer::{patch_mesh_shaders, ShadowBounds, ShadowFilter, ShadowSettings};
+
+// 1. Setup: patch YOUR mesh shaders in memory (files on disk are untouched).
+//    Contract: vert declares `uModel`, `aPos` (loc 0), `aNormal`; both have
+//    `void main()`; frag writes the colour output named by the 3rd argument.
+let (vert, frag) = patch_mesh_shaders(&vert_src, &frag_src, "FragColor")?; // -> anyhow::Result<(String, String)>
+program = link_program(gl, &vert, &frag)?;
+renderer.set_shadow_settings(gl, ShadowSettings::smooth()); // or ::ps2() / struct literal
+
+// 2. Each frame, BEFORE begin_scene: shadow pass over the casters.
+if renderer.shadows_active() {
+    let bounds = ShadowBounds::camera(view, proj, renderer.shadow_settings());
+    if renderer.begin_shadow_pass(gl, sun_toward_light, &bounds) { // -> bool
+        for (model, mesh) in casters { renderer.shadow_draw(gl, &model, mesh); }
+        renderer.end_shadow_pass(gl);
+    }
+}
+renderer.begin_scene(gl);
+// 3. Scene draw: set your uniforms with the SAME light vector, then
+renderer.bind_shadows(gl, program); // uploads uniforms, binds the map to unit 7, makes `program` current
+```
+
+* `light_dir` points *toward* the light. Pass the same vector to your
+  shader's light uniform so lit side and shadow side agree.
+* `bind_shadows` sets `uShadowStrength = 0` when shadows are off or no pass
+  ran, so it is always safe to call. It uses texture unit
+  `renderer::SHADOW_TEXTURE_UNIT` (7); don't leave your own texture there.
+* `ShadowBounds`: `Frustum` via `ShadowBounds::camera(view, proj, &settings)`
+  (fits the visible part of the camera frustum, up to `max_distance`),
+  `Aabb { min, max }` or `Sphere { center, radius }` for a fixed region.
+* The shadow pass is separate from `RenderParams`/the vertex-snap look: the
+  map is depth-only and drawn at its own size; the result is then affected by
+  the low-res framebuffer and composite like everything else.
+
+`ShadowSettings` (`#[serde(default)]`, also stored as `RenderParams.shadows`,
+so old profile files load with shadows off):
+
+| Field | Default | Effect |
+|---|---|---|
+| `enabled` | `false` | Master switch; `false` frees the map |
+| `resolution` | 1024 | Map side in texels (clamped 64..=4096) |
+| `bias` | 0.75 | Constant depth bias in map texels |
+| `normal_bias` | 1.0 | Receiver pushed along its normal, in texels |
+| `strength` | 0.55 | 0 = invisible, 1 = black umbra |
+| `softness` | 1.0 | PCF radius in texels (0 = one tap, capped at 2) |
+| `filter` | `Pcf` | `Pcf` soft, `Hard` one tap, `Dithered` Bayer-stippled (PS2 look; pair with a low `resolution`) |
+| `max_distance` | 40.0 | Frustum fit: how far from the eye is covered |
+| `caster_extend` | 30.0 | Frustum fit: how far toward the light casters are still included |
+| `texel_snap` | `true` | Snap the map to the texel grid so edges don't shimmer when the camera moves |
+
+Presets: `ShadowSettings::smooth()` (2048, PCF, softness 1.5) and
+`ShadowSettings::ps2()` (256, `Dithered`, strength 0.6). The F1 render panel
+has a **Shadows** section for all of the above. Demo:
+`DUST_SHADOWS=1 cargo run -p physics-sandbox` (or `DUST_SHADOWS=ps2`) adds
+five static cubes and draws the ground as a receiver.
+
+Limits: one directional light, no cascades (a single map fitted to the
+frustum, so large `max_distance` softens detail), no point-light shadows, only
+meshes you submit with `shadow_draw` cast, and only programs built from
+`patch_mesh_shaders` receive.
+
 ## Shader profiles
 
 A `ShaderProfile` (in `engine::profile`) bundles shader file paths + a
