@@ -13,6 +13,19 @@ use super::narrow::{collide, shape_bounds, Pose};
 use super::{Collider, ColliderShape};
 use crate::ecs::Transform;
 
+/// Result of a ray or shape cast.
+///
+/// * Ray: `distance` is the distance along the (normalised) direction from the
+///   origin; `point = origin + dir * distance`; `normal` is the surface normal
+///   at `point` facing back toward the ray origin.
+/// * Shape cast: `distance` is how far the shape's *centre* travelled before it
+///   first touched the collider (the shape at that position just touches, it
+///   does not penetrate); `point` is the contact point on the surface and
+///   `normal` points from the collider toward the swept shape.
+/// * `started_inside`: the origin (ray) or the shape (cast) already overlapped
+///   at distance 0. Then `distance == 0.0`; for shape casts `normal`/`point`
+///   come from the deepest overlap, for rays `normal` is `-dir`.
+/// * Entities tie-break on the lowest entity id, so results are deterministic.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
     pub entity: Entity,
@@ -216,45 +229,78 @@ pub(crate) fn cast_against(cands: &[Cand], shape: ColliderShape, pose: Pose, dir
     if let Some((entity, c)) = deepest(cands, shape, pose) {
         return Some(Hit { entity, point: c.point, normal: c.normal, distance: 0.0, started_inside: true });
     }
-    // Cull to colliders touching the swept volume.
-    let (lo0, hi0) = shape_bounds(shape, pose);
-    let end = dir * max;
-    let (lo, hi) = (lo0.min(lo0 + end), hi0.max(hi0 + end));
-    let near: Vec<Cand> = cands
-        .iter()
-        .copied()
-        .filter(|c| {
-            let (clo, chi) = shape_bounds(c.shape, c.pose);
-            clo.cmple(hi).all() && chi.cmpge(lo).all()
-        })
-        .collect();
-    if near.is_empty() || max <= 0.0 {
+    if max <= 0.0 {
         return None;
     }
+    // Per collider: find the time window in which the swept shape's bounds can
+    // touch the collider's bounds (moving-AABB slab test), then sample only
+    // inside it. Step <= half the shape's smallest extent, so no collider of
+    // any thickness can fall between two samples (its overlap window is >=
+    // 2 * min_extent wide); bisection then refines the first overlap.
+    let (lo0, hi0) = shape_bounds(shape, pose);
+    let (centre, half) = ((lo0 + hi0) * 0.5, (hi0 - lo0) * 0.5);
+    let step = (min_extent(shape) * 0.5).max(1e-3);
     let at = |t: f32| Pose::new(pose.position + dir * t, pose.rotation);
-    let step = (min_extent(shape) * 0.5).max(0.005).max(max / 2048.0);
-    let mut t_lo = 0.0;
-    loop {
-        let t_hi = (t_lo + step).min(max);
-        if deepest(&near, shape, at(t_hi)).is_some() {
-            // Bisect the first overlap inside (t_lo, t_hi].
-            let (mut a, mut b) = (t_lo, t_hi);
-            for _ in 0..24 {
-                let m = 0.5 * (a + b);
-                if deepest(&near, shape, at(m)).is_some() {
-                    b = m;
-                } else {
-                    a = m;
+    let mut best: Option<(f32, Hit)> = None;
+    for c in cands {
+        let (clo, chi) = shape_bounds(c.shape, c.pose);
+        let Some((w0, w1)) = ray_aabb_window(centre, dir, clo - half, chi + half, max) else { continue };
+        let (w0, w1) = ((w0 - step).max(0.0), (w1 + step).min(max));
+        let one = std::slice::from_ref(c);
+        let mut t_lo = w0;
+        let mut samples = 0u32;
+        loop {
+            let t_hi = (t_lo + step).min(w1);
+            if deepest(one, shape, at(t_hi)).is_some() {
+                let (mut a, mut b) = (t_lo, t_hi);
+                for _ in 0..24 {
+                    let m = 0.5 * (a + b);
+                    if deepest(one, shape, at(m)).is_some() {
+                        b = m;
+                    } else {
+                        a = m;
+                    }
                 }
+                if let Some((entity, ct)) = deepest(one, shape, at(b)) {
+                    // Candidates are id-sorted, so strict `<` keeps the lowest id on ties.
+                    if best.map_or(true, |(d, _)| a < d) {
+                        best = Some((a, Hit { entity, point: ct.point, normal: ct.normal, distance: a, started_inside: false }));
+                    }
+                }
+                break;
             }
-            let (entity, c) = deepest(&near, shape, at(b))?;
-            return Some(Hit { entity, point: c.point, normal: c.normal, distance: a, started_inside: false });
+            samples += 1;
+            if t_hi >= w1 || samples > 100_000 {
+                break;
+            }
+            t_lo = t_hi;
         }
-        if t_hi >= max {
-            return None;
-        }
-        t_lo = t_hi;
     }
+    best.map(|(_, h)| h)
+}
+
+/// Parametric interval `[t0, t1]` within `[0, max]` where `origin + dir*t` is inside the box.
+fn ray_aabb_window(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3, max: f32) -> Option<(f32, f32)> {
+    let (mut t0, mut t1) = (0.0f32, max);
+    for i in 0..3 {
+        if dir[i].abs() < 1e-9 {
+            if origin[i] < lo[i] || origin[i] > hi[i] {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / dir[i];
+            let (mut a, mut b) = ((lo[i] - origin[i]) * inv, (hi[i] - origin[i]) * inv);
+            if a > b {
+                std::mem::swap(&mut a, &mut b);
+            }
+            t0 = t0.max(a);
+            t1 = t1.min(b);
+            if t0 > t1 {
+                return None;
+            }
+        }
+    }
+    Some((t0, t1))
 }
 
 /// World queries. Implemented for `hecs::World`, so
@@ -273,6 +319,17 @@ pub trait PhysicsQueries {
     /// Entities whose colliders overlap `shape` at `pose`, sorted by entity id.
     fn overlap_shape(&self, shape: ColliderShape, pose: Pose, filter: &QueryFilter) -> Vec<Entity>;
     fn overlap_sphere(&self, center: Vec3, radius: f32, layer_mask: u32) -> Vec<Entity>;
+    /// Oriented-box overlap (`rotation` applies to the query box).
+    fn overlap_box(&self, center: Vec3, half_extents: Vec3, rotation: Quat, layer_mask: u32) -> Vec<Entity>;
+    /// Upright capsule overlap (same convention as [`capsule_sweep`](Self::capsule_sweep)).
+    fn overlap_capsule(&self, center: Vec3, radius: f32, half_height: f32, layer_mask: u32) -> Vec<Entity>;
+    /// Oriented-box sweep (`rotation` stays constant along the cast).
+    fn box_sweep(&self, center: Vec3, half_extents: Vec3, rotation: Quat, dir: Vec3, max: f32, layer_mask: u32) -> Option<Hit>;
+    /// Every collider the ray passes through within `max`, nearest first
+    /// (ties: lowest entity id). Each [`Hit`] is the *entry* point of that
+    /// collider; a ray starting inside one reports it with `started_inside`
+    /// at distance 0. Respects layers, exclusion and triggers via `filter`.
+    fn raycast_all(&self, origin: Vec3, dir: Vec3, max: f32, filter: &QueryFilter) -> Vec<Hit>;
 }
 
 impl PhysicsQueries for World {
@@ -330,6 +387,36 @@ impl PhysicsQueries for World {
 
     fn overlap_sphere(&self, center: Vec3, radius: f32, layer_mask: u32) -> Vec<Entity> {
         self.overlap_shape(ColliderShape::Sphere { radius }, Pose::at(center), &QueryFilter::mask(layer_mask))
+    }
+
+    fn overlap_box(&self, center: Vec3, half_extents: Vec3, rotation: Quat, layer_mask: u32) -> Vec<Entity> {
+        self.overlap_shape(ColliderShape::Box { half_extents }, Pose::new(center, rotation), &QueryFilter::mask(layer_mask))
+    }
+
+    fn overlap_capsule(&self, center: Vec3, radius: f32, half_height: f32, layer_mask: u32) -> Vec<Entity> {
+        self.overlap_shape(
+            ColliderShape::Capsule { radius, half_height },
+            Pose::new(center, Quat::IDENTITY),
+            &QueryFilter::mask(layer_mask),
+        )
+    }
+
+    fn box_sweep(&self, center: Vec3, half_extents: Vec3, rotation: Quat, dir: Vec3, max: f32, layer_mask: u32) -> Option<Hit> {
+        self.shape_cast(ColliderShape::Box { half_extents }, Pose::new(center, rotation), dir, max, &QueryFilter::mask(layer_mask))
+    }
+
+    fn raycast_all(&self, origin: Vec3, dir: Vec3, max: f32, filter: &QueryFilter) -> Vec<Hit> {
+        let Some(dir) = dir.try_normalize() else { return Vec::new() };
+        let mut hits: Vec<Hit> = candidates(self, filter)
+            .into_iter()
+            .filter_map(|c| {
+                let (t, normal) = ray_shape(c.shape, c.pose, origin, dir)?;
+                (t <= max).then(|| Hit { entity: c.entity, point: origin + dir * t, normal, distance: t, started_inside: t == 0.0 })
+            })
+            .collect();
+        // Candidates are id-sorted and the sort is stable, so ties keep id order.
+        hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        hits
     }
 }
 
@@ -481,5 +568,95 @@ mod tests {
             &QueryFilter::default(),
         );
         assert_eq!(caps, vec![a]);
+    }
+
+    #[test]
+    fn raycast_all_sorted_with_layers_and_triggers() {
+        let mut w = World::new();
+        let far = spawn(&mut w, Vec3::new(0.0, 0.0, 20.0), ColliderShape::Sphere { radius: 1.0 });
+        let near = spawn(&mut w, Vec3::new(0.0, 0.0, 5.0), ColliderShape::Aabb { half_extents: Vec3::splat(1.0) });
+        let mid = w.spawn((
+            Transform::from_position(Vec3::new(0.0, 0.0, 10.0)),
+            Collider::capsule(0.5, 1.0),
+            CollisionLayers::new(LayerMask::bit(2), LayerMask::ALL),
+        ));
+        let trig = w.spawn((Transform::from_position(Vec3::new(0.0, 0.0, 7.0)), Collider::trigger(ColliderShape::Sphere { radius: 0.5 })));
+        let all = w.raycast_all(Vec3::ZERO, Vec3::Z * 3.0, 100.0, &QueryFilter::mask(u32::MAX));
+        assert_eq!(all.iter().map(|h| h.entity).collect::<Vec<_>>(), vec![near, mid, far]);
+        assert!((all[0].distance - 4.0).abs() < 1e-4 && (all[1].distance - 9.5).abs() < 1e-4 && (all[2].distance - 19.0).abs() < 1e-4);
+        assert!((all[0].normal - -Vec3::Z).length() < 1e-4);
+        // max cuts the far ones.
+        assert_eq!(w.raycast_all(Vec3::ZERO, Vec3::Z, 10.0, &QueryFilter::default()).len(), 2);
+        // Layer mask: only layer 2.
+        let l2 = w.raycast_all(Vec3::ZERO, Vec3::Z, 100.0, &QueryFilter::mask(LayerMask::bit(2).0));
+        assert_eq!(l2.iter().map(|h| h.entity).collect::<Vec<_>>(), vec![mid]);
+        // Triggers opt-in; exclusion.
+        let with_t = w.raycast_all(Vec3::ZERO, Vec3::Z, 100.0, &QueryFilter::default().with_triggers().excluding(far));
+        assert_eq!(with_t.iter().map(|h| h.entity).collect::<Vec<_>>(), vec![near, trig, mid]);
+        assert!(w.raycast_all(Vec3::ZERO, Vec3::ZERO, 100.0, &QueryFilter::default()).is_empty());
+        // Starting inside reports distance 0 first.
+        let inside = w.raycast_all(Vec3::new(0.0, 0.0, 5.0), Vec3::Z, 100.0, &QueryFilter::default());
+        assert!(inside[0].started_inside && inside[0].entity == near && inside[0].distance == 0.0);
+    }
+
+    #[test]
+    fn raycast_all_agrees_with_raycast_first_hit() {
+        let mut w = World::new();
+        for i in 0..6 {
+            spawn(&mut w, Vec3::new((i % 2) as f32 * 0.3, 0.0, 3.0 + i as f32 * 2.0), ColliderShape::Sphere { radius: 0.5 });
+        }
+        let first = w.raycast(Vec3::ZERO, Vec3::Z, 100.0, u32::MAX).unwrap();
+        let all = w.raycast_all(Vec3::ZERO, Vec3::Z, 100.0, &QueryFilter::default());
+        assert_eq!(all.len(), 6);
+        assert_eq!(all[0], first);
+        assert!(all.windows(2).all(|p| p[0].distance <= p[1].distance));
+    }
+
+    #[test]
+    fn box_sweep_rotated_and_overlap_box_capsule() {
+        let mut w = World::new();
+        let wall = spawn(&mut w, Vec3::new(10.0, 0.0, 0.0), ColliderShape::Aabb { half_extents: Vec3::new(1.0, 5.0, 5.0) });
+        // Axis-aligned box half 0.5: wall face at x=9, centre stops at 8.5.
+        let h = w.box_sweep(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY, Vec3::X, 50.0, u32::MAX).unwrap();
+        assert_eq!(h.entity, wall);
+        assert!((h.distance - 8.5).abs() < 0.01, "{}", h.distance);
+        assert!((h.normal - -Vec3::X).length() < 1e-3 && !h.started_inside);
+        // Rotated 45 deg about Y: corner leads, centre stops at 9 - 0.5*sqrt2.
+        let h = w.box_sweep(Vec3::ZERO, Vec3::splat(0.5), Quat::from_rotation_y(std::f32::consts::FRAC_PI_4), Vec3::X, 50.0, u32::MAX).unwrap();
+        assert!((h.distance - (9.0 - 0.5 * 2f32.sqrt())).abs() < 0.01, "{}", h.distance);
+        // Too short: no hit.
+        assert!(w.box_sweep(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY, Vec3::X, 5.0, u32::MAX).is_none());
+        // Overlap box / capsule.
+        assert_eq!(w.overlap_box(Vec3::new(8.6, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY, u32::MAX), vec![wall]);
+        assert!(w.overlap_box(Vec3::new(7.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY, u32::MAX).is_empty());
+        assert_eq!(w.overlap_capsule(Vec3::new(8.7, 2.0, 0.0), 0.4, 1.0, u32::MAX), vec![wall]);
+        assert!(w.overlap_capsule(Vec3::new(5.0, 2.0, 0.0), 0.4, 1.0, u32::MAX).is_empty());
+        // Overlap respects layer mask and triggers.
+        let t = w.spawn((Transform::from_position(Vec3::new(0.0, 0.0, 0.0)), Collider::trigger(ColliderShape::Sphere { radius: 1.0 })));
+        assert!(w.overlap_box(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY, u32::MAX).is_empty());
+        assert_eq!(w.overlap_shape(ColliderShape::Box { half_extents: Vec3::splat(0.5) }, Pose::at(Vec3::ZERO), &QueryFilter::default().with_triggers()), vec![t]);
+        assert!(w.overlap_box(Vec3::new(8.6, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY, LayerMask::bit(5).0).is_empty());
+    }
+
+    #[test]
+    fn tiny_sphere_does_not_tunnel_thin_wall_on_long_cast() {
+        let mut w = World::new();
+        let wall = spawn(&mut w, Vec3::new(500.0, 0.0, 0.0), ColliderShape::Aabb { half_extents: Vec3::new(0.005, 3.0, 3.0) });
+        let h = w.spherecast(Vec3::ZERO, 0.02, Vec3::X, 1000.0, u32::MAX).unwrap();
+        assert_eq!(h.entity, wall);
+        assert!((h.distance - (500.0 - 0.005 - 0.02)).abs() < 0.01, "{}", h.distance);
+    }
+
+    #[test]
+    fn shape_cast_grazing_and_zero_length() {
+        let mut w = World::new();
+        spawn(&mut w, Vec3::new(5.0, 0.0, 0.0), ColliderShape::Sphere { radius: 1.0 });
+        // Parallel pass that clears the sphere by 0.2.
+        assert!(w.spherecast(Vec3::new(0.0, 1.7, 0.0), 0.5, Vec3::X, 20.0, u32::MAX).is_none());
+        // Pass that clips it.
+        assert!(w.spherecast(Vec3::new(0.0, 1.3, 0.0), 0.5, Vec3::X, 20.0, u32::MAX).is_some());
+        // Zero direction / zero length.
+        assert!(w.spherecast(Vec3::ZERO, 0.5, Vec3::ZERO, 20.0, u32::MAX).is_none());
+        assert!(w.spherecast(Vec3::ZERO, 0.5, Vec3::X, 0.0, u32::MAX).is_none());
     }
 }
