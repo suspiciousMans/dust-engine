@@ -393,23 +393,28 @@ fn apply_override(se: &mut SceneEntity, o: &Override) {
 /// from the current live values. Instances whose prefab can't be loaded are
 /// left untouched. Returns the number of instances updated.
 pub fn update_overrides(world: &mut World, reg: &Registry, lib: &mut PrefabLibrary) -> usize {
-    let mut n = 0;
-    for root in instance_roots(world) {
-        let Some(inst) = instance_of(world, root) else { continue };
-        let Ok(prefab) = lib.get(&inst.source) else { continue };
-        let members = members_of(world, root);
-        let mut overrides = Vec::new();
-        for base in &prefab.entities {
-            let Some(&e) = members.get(&base.id) else { continue };
-            let cur = Scene::capture_entity(world, reg, e);
-            overrides.extend(diff_entity(base.id, &cur, base));
-        }
-        if let Ok(mut i) = world.get::<&mut PrefabInstance>(root) {
-            i.overrides = overrides;
-            n += 1;
-        }
+    instance_roots(world).into_iter().filter(|root| update_overrides_of(world, reg, lib, *root)).count()
+}
+
+/// Recomputes the overrides of one instance against its prefab's current
+/// content. Returns false if the instance or its prefab can't be found.
+pub fn update_overrides_of(world: &mut World, reg: &Registry, lib: &mut PrefabLibrary, root: Entity) -> bool {
+    let Some(inst) = instance_of(world, root) else { return false };
+    let Ok(prefab) = lib.get(&inst.source) else { return false };
+    let members = members_of(world, root);
+    let mut overrides = Vec::new();
+    for base in &prefab.entities {
+        let Some(&e) = members.get(&base.id) else { continue };
+        let cur = Scene::capture_entity(world, reg, e);
+        overrides.extend(diff_entity(base.id, &cur, base));
     }
-    n
+    match world.get::<&mut PrefabInstance>(root) {
+        Ok(mut i) => {
+            i.overrides = overrides;
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 // ------------------------------------------------------------ refresh
@@ -595,8 +600,11 @@ pub fn apply_to_prefab(world: &mut World, reg: &Registry, lib: &mut PrefabLibrar
     if let Ok(mut i) = world.get::<&mut PrefabInstance>(root) {
         i.overrides.clear();
     }
-    // the applied instance's root placement stays as an override
-    update_overrides(world, reg, lib);
+    // the applied instance's root placement stays as an override. Only this
+    // instance: the others still hold OLD content and must keep the
+    // overrides captured above, or refresh would treat the stale values as
+    // deliberate edits.
+    update_overrides_of(world, reg, lib, root);
     // refresh other instances
     let others: Vec<Entity> = instance_roots(world)
         .into_iter()

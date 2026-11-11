@@ -196,7 +196,7 @@ impl RawRon {
         Ok(Self::from_text(&ron::ser::to_string_pretty(v, pretty())?))
     }
     pub fn parse<T: DeserializeOwned>(&self) -> Result<T, ron::error::SpannedError> {
-        ron::from_str(&self.text())
+        ron_options().from_str(&self.text())
     }
 }
 
@@ -317,6 +317,12 @@ pub struct Migration {
 /// [`SCENE_FORMAT_VERSION`]) whenever the on-disk format changes meaning.
 pub fn builtin_migrations() -> Vec<Migration> {
     Vec::new()
+}
+
+/// Reader options: hand-written scenes may say `parent: "02"` instead of
+/// `parent: Some("02")`. Output still writes the explicit form.
+pub fn ron_options() -> ron::Options {
+    ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
 }
 
 pub fn pretty() -> ron::ser::PrettyConfig {
@@ -569,7 +575,7 @@ impl Scene {
     }
 
     pub fn from_ron_with(text: &str, migrations: &[Migration], target: u32) -> Result<Scene, SceneError> {
-        let mut scene: Scene = ron::from_str(text)?;
+        let mut scene: Scene = ron_options().from_str(text)?;
         if scene.format_version > target {
             return Err(SceneError::TooNew { found: scene.format_version, supported: target });
         }

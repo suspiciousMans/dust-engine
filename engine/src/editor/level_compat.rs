@@ -258,9 +258,13 @@ mod tests {
         for p in real_levels() {
             let lv = crate::level::load_from_file(&p).unwrap();
             let mut w = World::new();
-            let res = level_to_scene(&lv).unwrap().load_replace(&mut w, &r);
+            let scene = level_to_scene(&lv).unwrap();
+            let res = scene.load_replace(&mut w, &r);
             assert!(res.report.warnings.is_empty() || res.report.warnings.iter().all(|m| m.contains("unknown")), "{p:?}: {:?}", res.report);
-            let back = scene_to_level(&Scene::from_world(&mut w, &r)).unwrap();
+            // Level-wide settings live on the open document, not in the world.
+            let mut captured = Scene::from_world(&mut w, &r);
+            captured.settings = scene.settings.clone();
+            let back = scene_to_level(&captured).unwrap();
             assert_eq!(back.objects.len(), lv.objects.len(), "{p:?}");
             assert_eq!(back.lights.len(), lv.lights.len());
             assert_eq!(back.characters.len(), lv.characters.len());
