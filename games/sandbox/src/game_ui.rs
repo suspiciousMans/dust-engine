@@ -155,4 +155,91 @@ mod tests {
         assert_eq!(ui.hud.source(), engine::ui_designer::ScreenSource::File, "{:?}", ui.hud.last_error());
         assert_eq!(ui.pause.source(), engine::ui_designer::ScreenSource::File, "{:?}", ui.pause.last_error());
     }
+
+    fn snapshot<'a>(hud: &'a HudState, docked: bool) -> UiSnapshot<'a> {
+        UiSnapshot { hud, level_name: "default", dt: 1.0 / 60.0, net_active: false, net_status: "Offline", editor_available: true, paused: false, docked }
+    }
+
+    fn node_named(doc: &engine::ui_designer::UiDoc, name: &str) -> engine::ui_designer::UiNode {
+        let mut found = None;
+        doc.root.walk(&mut |n| {
+            if n.name == name {
+                found = Some(n.clone());
+            }
+        });
+        found.unwrap_or_else(|| panic!("no node {name}"))
+    }
+
+    #[test]
+    fn hud_shows_health_toast_and_hint_from_published_state() {
+        use engine::ui_designer::{resolve_classes, resolve_text, solve, LayoutParams};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut ui = GameUi::new(root);
+        let mut hud = HudState::default();
+        hud.set_bar("Health", 0.2);
+        hud.show_toast("Checkpoint saved", 1.5);
+        ui.update(&snapshot(&hud, false));
+
+        let doc = ui.hud.doc().clone();
+        let doc = &doc;
+        let layout = solve(doc, &LayoutParams::new([1280.0, 720.0]).with_bindings(&ui.bindings));
+        let shown = |name: &str| layout.rect(node_named(doc, name).id).is_some();
+        assert!(shown("HealthBar") && shown("Toast0") && shown("Hint"));
+        assert!(!shown("Toast1") && !shown("StatsChip") && !shown("NetChip") && !shown("Title"));
+        assert_eq!(resolve_text(&node_named(doc, "HealthBar"), Some(&ui.bindings)), "Health: 20%");
+        assert_eq!(resolve_text(&node_named(doc, "Toast0"), Some(&ui.bindings)), "Checkpoint saved");
+        assert_eq!(resolve_classes(&node_named(doc, "HealthBar"), Some(&ui.bindings)), ["bar", "bar_low"]);
+        assert!(resolve_text(&node_named(doc, "Hint"), Some(&ui.bindings)).starts_with("Play Mode \u{2014} Esc to pause \u{b7} F3 stop"));
+
+        // Healthy again: no low class; the stats toggle shows the chip; docked hides the hint.
+        hud.set_bar("Health", 0.9);
+        ui.show_stats = true;
+        ui.update(&snapshot(&hud, true));
+        let layout = solve(doc, &LayoutParams::new([1280.0, 720.0]).with_bindings(&ui.bindings));
+        assert_eq!(resolve_classes(&node_named(doc, "HealthBar"), Some(&ui.bindings)), ["bar"]);
+        assert!(layout.rect(node_named(doc, "StatsChip").id).is_some());
+        assert!(layout.rect(node_named(doc, "Hint").id).is_none());
+        assert_eq!(resolve_text(&node_named(doc, "Stats"), Some(&ui.bindings)), "default \u{b7} 60 fps \u{b7} 16.7 ms");
+    }
+
+    #[test]
+    fn pause_menu_toggle_and_buttons_round_trip_through_the_renderer() {
+        // Headless egui: click "Quit Game" and the toggle, expect the actions back.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut ui = GameUi::new(root);
+        ui.update(&snapshot(&HudState::default(), false));
+        let ctx = egui::Context::default();
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        let frame = |ctx: &egui::Context, events: Vec<egui::Event>, ui: &GameUi| {
+            let raw = egui::RawInput { screen_rect: Some(area), events, ..Default::default() };
+            let mut out = Vec::new();
+            let _ = ctx.run(raw, |ctx| out = ui.draw_pause(ctx, area));
+            out
+        };
+        let mut layout = None;
+        let raw = egui::RawInput { screen_rect: Some(area), ..Default::default() };
+        let _ = ctx.run(raw, |ctx| layout = Some(ui.pause.show(ctx, &ui.bindings, area).layout));
+        let layout = layout.unwrap();
+        let pause_doc = ui.pause.doc().clone();
+        let centre = |name: &str| {
+            let r = layout.rect(node_named(&pause_doc, name).id).unwrap_or_else(|| panic!("{name} not laid out"));
+            let c = r.center();
+            egui::pos2(c[0], c[1])
+        };
+        let click = |ctx: &egui::Context, pos: egui::Pos2, ui: &GameUi| {
+            let btn = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            let mut actions = Vec::new();
+            for evs in [vec![egui::Event::PointerMoved(pos)], vec![egui::Event::PointerMoved(pos)], vec![btn(true)], vec![btn(false)]] {
+                actions.extend(frame(ctx, evs, ui));
+            }
+            actions
+        };
+        assert_eq!(click(&ctx, centre("QuitButton"), &ui), [UiAction::Quit]);
+        assert_eq!(click(&ctx, centre("ResumeButton"), &ui), [UiAction::Resume]);
+        assert_eq!(click(&ctx, centre("ExitToEditorButton"), &ui), [UiAction::ExitToEditor]);
+        assert_eq!(click(&ctx, centre("StatsToggle"), &ui), [UiAction::SetShowStats(true)], "unchecked -> asks for on");
+        ui.show_stats = true;
+        ui.update(&snapshot(&HudState::default(), false));
+        assert_eq!(click(&ctx, centre("StatsToggle"), &ui), [UiAction::SetShowStats(false)], "checked -> asks for off");
+    }
 }
