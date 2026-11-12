@@ -3,11 +3,15 @@
 //! backend only plays. `AudioContext` (in `mod.rs`) is this engine over the
 //! platform backend.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
 use super::backend::{AudioBackend, LoopBuffer};
+use super::mixer::{Mixer, MixerError, MixerSettings, MixerSettingsError, MUSIC_BUS, SFX_BUS};
+use super::spatial::Listener;
 use super::tracks::{LoopClock, TrackBank, TrackId};
+use super::voices::Voices;
 
 /// Name of the track `play_music_*` uses.
 pub const MUSIC_TRACK: &str = "music";
@@ -21,10 +25,10 @@ enum TimeSource {
     Manual,
 }
 
-struct Pending {
-    id: TrackId,
-    buffer: LoopBuffer,
-    fade_in_secs: f32,
+pub(super) struct Pending {
+    pub(super) id: TrackId,
+    pub(super) buffer: LoopBuffer,
+    pub(super) fade_in_secs: f32,
 }
 
 fn sane_secs(s: f32) -> f32 {
@@ -36,16 +40,20 @@ fn sane_secs(s: f32) -> f32 {
 }
 
 pub struct AudioEngine<B: AudioBackend> {
-    backend: B,
-    bank: TrackBank,
-    clock: LoopClock,
+    pub(super) backend: B,
+    pub(super) bank: TrackBank,
+    pub(super) clock: LoopClock,
     time: TimeSource,
     /// Registered but not yet started in the backend; started when the
     /// `TrackHandle` returned by `add_track` is dropped, so a chained
     /// `.set_gain(0.5)` applies before any sound plays.
-    pending: Vec<Pending>,
-    music_volume: f32,
-    sfx_volume: f32,
+    pub(super) pending: Vec<Pending>,
+    pub(super) mixer: Mixer,
+    /// Track name -> bus, applied whenever a track of that name is created
+    /// (persisted in `MixerSettings::routes`).
+    pub(super) routes: HashMap<String, String>,
+    pub(super) listener: Listener,
+    pub(super) voices: Voices,
 }
 
 impl<B: AudioBackend> AudioEngine<B> {
@@ -66,8 +74,10 @@ impl<B: AudioBackend> AudioEngine<B> {
             clock: LoopClock::new(),
             time,
             pending: Vec::new(),
-            music_volume: 1.0,
-            sfx_volume: 1.0,
+            mixer: Mixer::new(),
+            routes: HashMap::new(),
+            listener: Listener::default(),
+            voices: Voices::default(),
         }
     }
 
@@ -98,6 +108,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         for id in self.bank.tick(dt) {
             self.push_volume_id(id);
         }
+        self.update_voices(dt);
     }
 
     /// Seconds on the shared loop clock.
@@ -144,7 +155,7 @@ impl<B: AudioBackend> AudioEngine<B> {
     }
 
     pub fn track_names(&self) -> Vec<String> {
-        self.bank.iter().map(|t| t.name.clone()).collect()
+        self.bank.iter().filter(|t| !t.name.starts_with('@')).map(|t| t.name.clone()).collect()
     }
 
     /// Current gain (mid-fade value), before mute and music volume.
@@ -175,6 +186,7 @@ impl<B: AudioBackend> AudioEngine<B> {
         match self.bank.remove(name) {
             Some(t) => {
                 self.pending.retain(|p| p.id != t.id);
+                self.voices.forget(t.id);
                 self.backend.stop_track(t.id);
                 true
             }
@@ -184,6 +196,7 @@ impl<B: AudioBackend> AudioEngine<B> {
 
     pub fn stop_all_tracks(&mut self) {
         for t in self.bank.clear() {
+            self.voices.forget(t.id);
             self.backend.stop_track(t.id);
         }
         self.pending.clear();
@@ -197,11 +210,25 @@ impl<B: AudioBackend> AudioEngine<B> {
         true
     }
 
-    fn effective_volume(&self, id: TrackId) -> Option<f32> {
-        self.bank.by_id(id).map(|t| t.level() * self.music_volume)
+    pub(super) fn any_track_solo(&self) -> bool {
+        self.bank.iter().any(|t| t.solo)
     }
 
-    fn push_volume_id(&mut self, id: TrackId) {
+    /// Track gain x mixer chain (bus gains, mutes, solo).
+    pub(super) fn effective_volume(&self, id: TrackId) -> Option<f32> {
+        let t = self.bank.by_id(id)?;
+        let spatial = self.voices.gain(id).unwrap_or(1.0);
+        Some(t.level() * self.mixer.effective_gain(&t.bus, t.solo, self.any_track_solo()) * spatial)
+    }
+
+    pub(super) fn push_all_volumes(&mut self) {
+        let ids: Vec<TrackId> = self.bank.iter().map(|t| t.id).collect();
+        for id in ids {
+            self.push_volume_id(id);
+        }
+    }
+
+    pub(super) fn push_volume_id(&mut self, id: TrackId) {
         if self.pending.iter().any(|p| p.id == id) {
             return; // not started yet; it starts at the then-current volume
         }
@@ -218,7 +245,7 @@ impl<B: AudioBackend> AudioEngine<B> {
     /// Registers a track (stopping any with the same name) and queues its
     /// backend start. Returns None for an empty buffer (the old track is
     /// still removed).
-    fn register(&mut self, name: &str, buffer: LoopBuffer, looped: bool, phase: f64, fade_in_secs: f32) -> Option<TrackId> {
+    pub(super) fn register(&mut self, name: &str, buffer: LoopBuffer, looped: bool, phase: f64, fade_in_secs: f32) -> Option<TrackId> {
         self.sync();
         if buffer.is_empty() {
             self.stop_track(name);
@@ -227,20 +254,35 @@ impl<B: AudioBackend> AudioEngine<B> {
         let (id, replaced) = self.bank.insert(name, looped, buffer.duration_secs(), phase);
         if let Some(old) = replaced {
             self.pending.retain(|p| p.id != old.id);
+            self.voices.forget(old.id);
             self.backend.stop_track(old.id);
+        }
+        if let Some(bus) = self.routes.get(name).filter(|b| self.mixer.has_bus(b)).cloned() {
+            if let Some(t) = self.bank.get_mut(name) {
+                t.bus = bus;
+            }
         }
         self.pending.push(Pending { id, buffer, fade_in_secs });
         Some(id)
     }
 
-    fn start_pending(&mut self, id: TrackId) {
+    pub(super) fn start_pending(&mut self, id: TrackId) {
         self.sync();
         let Some(i) = self.pending.iter().position(|p| p.id == id) else { return };
         let p = self.pending.remove(i);
         let Some(track) = self.bank.by_id(id) else { return };
         let start = if track.looped { self.clock.position(track.len_secs, track.phase) } else { 0.0 };
-        let (looped, vol) = (track.looped, track.level() * self.music_volume);
-        self.backend.start_track(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs);
+        let looped = track.looped;
+        let vol = self.effective_volume(id).unwrap_or(0.0);
+        match self.voices.pan_and_pitch(id) {
+            Some(((l, r), pitch)) => {
+                self.backend.start_track_panned(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs, l, r);
+                if let Some(pitch) = pitch {
+                    self.backend.set_track_pitch(id, pitch);
+                }
+            }
+            None => self.backend.start_track(id, &p.buffer, looped, start as f32, vol, p.fade_in_secs),
+        }
     }
 
     /// Registers, sets the initial gain, and starts right away (legacy path).
@@ -254,57 +296,213 @@ impl<B: AudioBackend> AudioEngine<B> {
         }
     }
 
-    // ---- master volumes -------------------------------------------------
+    // ---- master volumes (the `music` and `sfx` buses) ----------------------
 
-    /// Scales every track (music, layers, added tracks).
+    /// Scales every track on the `music` bus (the default bus: music, layers
+    /// and added tracks). Same as `set_bus_gain("music", ..)`.
     pub fn set_music_volume(&mut self, volume: f32) {
-        if volume.is_finite() {
-            self.music_volume = volume.clamp(0.0, 1.0);
-        }
-        let ids: Vec<TrackId> = self.bank.iter().map(|t| t.id).collect();
-        for id in ids {
-            self.push_volume_id(id);
-        }
+        self.set_bus_gain(MUSIC_BUS, volume);
     }
 
     pub fn music_volume(&self) -> f32 {
-        self.music_volume
+        self.mixer.gain(MUSIC_BUS).unwrap_or(1.0)
     }
 
     /// Volume for `play_tone`, `play_samples` and `play_sfx_file` (0..=1).
+    /// Same as `set_bus_gain("sfx", ..)`.
     pub fn set_sfx_volume(&mut self, volume: f32) {
-        if volume.is_finite() {
-            self.sfx_volume = volume.clamp(0.0, 1.0);
-        }
+        self.set_bus_gain(SFX_BUS, volume);
     }
 
     pub fn sfx_volume(&self) -> f32 {
-        self.sfx_volume
+        self.mixer.gain(SFX_BUS).unwrap_or(1.0)
+    }
+
+    // ---- mixer: buses ----------------------------------------------------
+
+    /// Read-only view of the bus tree.
+    pub fn mixer(&self) -> &Mixer {
+        &self.mixer
+    }
+
+    /// Adds a bus under `parent` (`"master"`, `"sfx"`, ...).
+    pub fn add_bus(&mut self, name: &str, parent: &str) -> Result<(), MixerError> {
+        self.mixer.add_bus(name, parent)
+    }
+
+    /// Removes a user bus; its child buses and tracks move to its parent.
+    pub fn remove_bus(&mut self, name: &str) -> Result<(), MixerError> {
+        let parent = self.mixer.remove_bus(name)?;
+        for t in self.bank_mut_iter() {
+            if t.bus == name {
+                t.bus = parent.clone();
+            }
+        }
+        self.routes.retain(|_, b| b != name);
+        self.push_all_volumes();
+        Ok(())
+    }
+
+    pub fn set_bus_parent(&mut self, name: &str, parent: &str) -> Result<(), MixerError> {
+        self.mixer.set_parent(name, parent)?;
+        self.push_all_volumes();
+        Ok(())
+    }
+
+    /// Bus gain 0..=1 (NaN ignored). False for an unknown bus.
+    pub fn set_bus_gain(&mut self, name: &str, gain: f32) -> bool {
+        let ok = self.mixer.set_gain(name, gain);
+        if ok {
+            self.push_all_volumes();
+        }
+        ok
+    }
+
+    pub fn set_bus_muted(&mut self, name: &str, muted: bool) -> bool {
+        let ok = self.mixer.set_muted(name, muted);
+        if ok {
+            self.push_all_volumes();
+        }
+        ok
+    }
+
+    pub fn set_bus_solo(&mut self, name: &str, solo: bool) -> bool {
+        let ok = self.mixer.set_solo(name, solo);
+        if ok {
+            self.push_all_volumes();
+        }
+        ok
+    }
+
+    pub fn bus_gain(&self, name: &str) -> Option<f32> {
+        self.mixer.gain(name)
+    }
+
+    pub fn bus_names(&self) -> Vec<String> {
+        self.mixer.buses().iter().map(|b| b.name.clone()).collect()
+    }
+
+    // ---- mixer: tracks <-> buses --------------------------------------------
+
+    /// Routes a track through `bus` (now if it exists, and again whenever a
+    /// track of that name is created later). False if the bus is unknown.
+    pub fn assign_track_bus(&mut self, track: &str, bus: &str) -> bool {
+        if !self.mixer.has_bus(bus) {
+            return false;
+        }
+        self.routes.insert(track.to_string(), bus.to_string());
+        let id = self.bank.get_mut(track).map(|t| {
+            t.bus = bus.to_string();
+            t.id
+        });
+        if let Some(id) = id {
+            self.push_volume_id(id);
+        }
+        true
+    }
+
+    pub fn track_bus(&self, track: &str) -> Option<&str> {
+        self.bank.get(track).map(|t| t.bus.as_str())
+    }
+
+    pub fn set_track_solo(&mut self, name: &str, solo: bool) -> bool {
+        let ok = self.bank.get_mut(name).map(|t| t.solo = solo).is_some();
+        if ok {
+            self.push_all_volumes();
+        }
+        ok
+    }
+
+    pub fn track_solo(&self, name: &str) -> Option<bool> {
+        self.bank.get(name).map(|t| t.solo)
+    }
+
+    /// What the backend is actually told for this track: its own gain and
+    /// mute x bus chain x solo (x spatial gain for spatial tracks).
+    pub fn track_effective_gain(&self, name: &str) -> Option<f32> {
+        let id = self.bank.get(name)?.id;
+        self.effective_volume(id)
+    }
+
+    /// The multiplier fire-and-forget sounds on `bus` get.
+    pub fn bus_effective_gain(&self, bus: &str) -> f32 {
+        self.mixer.effective_gain(bus, false, self.any_track_solo())
+    }
+
+    /// Peak level (0..=1) of a track since last asked, if the backend
+    /// measures it (`None`: gains only).
+    pub fn track_level(&self, name: &str) -> Option<f32> {
+        let id = self.bank.get(name)?.id;
+        self.backend.track_level(id)
+    }
+
+    // ---- mixer: persistence --------------------------------------------------
+
+    /// Current buses (gain, mute, solo, parent) and track routing.
+    pub fn mixer_settings(&self) -> MixerSettings {
+        let mut s = self.mixer.to_settings();
+        s.routes = self.routes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        s
+    }
+
+    /// Applies saved settings; returns warnings for anything skipped.
+    pub fn apply_mixer_settings(&mut self, settings: &MixerSettings) -> Vec<String> {
+        let mut warnings = self.mixer.apply_settings(settings);
+        for (track, bus) in &settings.routes {
+            if self.mixer.has_bus(bus) {
+                self.assign_track_bus(track, bus);
+            } else {
+                warnings.push(format!("route `{track}`: unknown bus `{bus}`"));
+            }
+        }
+        self.push_all_volumes();
+        warnings
+    }
+
+    pub fn save_mixer_settings(&self, path: &Path) -> Result<(), MixerSettingsError> {
+        self.mixer_settings().save(path)
+    }
+
+    /// Loads and applies a RON file; returns the apply warnings.
+    pub fn load_mixer_settings(&mut self, path: &Path) -> Result<Vec<String>, MixerSettingsError> {
+        let s = MixerSettings::load(path)?;
+        Ok(self.apply_mixer_settings(&s))
+    }
+
+    fn bank_mut_iter(&mut self) -> impl Iterator<Item = &mut super::tracks::Track> {
+        self.bank.iter_mut()
     }
 
     // ---- one-shots ------------------------------------------------------
 
-    /// Plays a sound file once, fire-and-forget.
+    /// Plays a sound file once, fire-and-forget, on the `sfx` bus.
     pub fn play_sfx_file(&self, path: &Path) -> anyhow::Result<()> {
-        self.backend.play_file_once(path, self.sfx_volume)
+        self.backend.play_file_once(path, self.bus_effective_gain(SFX_BUS))
     }
 
     /// A procedural sine-wave blip — no asset file required. A bad duration
     /// (negative, NaN, infinite) is treated as zero and skipped.
     pub fn play_tone(&self, frequency_hz: f32, duration_secs: f32) {
         let secs = sane_secs(duration_secs);
-        if secs <= 0.0 || self.sfx_volume <= 0.0 {
+        let vol = self.bus_effective_gain(SFX_BUS);
+        if secs <= 0.0 || vol <= 0.0 {
             return;
         }
-        self.backend.play_tone(frequency_hz, secs, self.sfx_volume);
+        self.backend.play_tone(frequency_hz, secs, vol);
     }
 
-    /// Plays raw mono samples (-1..=1) once, at the sfx volume.
+    /// Plays raw mono samples (-1..=1) once, on the `sfx` bus.
     pub fn play_samples(&self, samples: &[f32], sample_rate: u32) {
-        if samples.is_empty() || self.sfx_volume <= 0.0 {
+        self.play_samples_on(SFX_BUS, samples, sample_rate);
+    }
+
+    /// Like `play_samples`, through any bus (e.g. `"ui"`). Unknown bus: silent.
+    pub fn play_samples_on(&self, bus: &str, samples: &[f32], sample_rate: u32) {
+        let vol = self.bus_effective_gain(bus);
+        if samples.is_empty() || vol <= 0.0 {
             return;
         }
-        self.backend.play_oneshot(samples, sample_rate, self.sfx_volume);
+        self.backend.play_oneshot(samples, sample_rate, vol);
     }
 
     // ---- legacy music / layer API (now two named tracks) -----------------
@@ -584,5 +782,133 @@ mod tests {
         a.start_now(MUSIC_TRACK, LoopBuffer::mono(vec![0.0; 3000], 1000), false, 0.0, 0.0, 1.0);
         assert_eq!(start_of(&a, "music"), 0.0);
         assert_eq!(a.track_position("music"), Some(0.0));
+    }
+
+    // ---- mixer ------------------------------------------------------------
+
+    #[test]
+    fn track_effective_gain_is_track_times_bus_chain() {
+        let mut a = engine();
+        a.add_bus("footsteps", "sfx").unwrap();
+        a.add_track("steps", loop_of(1.0)).set_gain(0.5);
+        assert_eq!(a.track_bus("steps"), Some("music")); // default bus
+        assert!(a.assign_track_bus("steps", "footsteps"));
+        a.set_bus_gain("footsteps", 0.5);
+        a.set_bus_gain("sfx", 0.5);
+        a.set_bus_gain("master", 0.8);
+        // 0.5 track * 0.5 * 0.5 * 0.8
+        assert!((vol(&a, "steps") - 0.1).abs() < 1e-6, "{}", vol(&a, "steps"));
+        assert_eq!(a.track_effective_gain("steps"), Some(vol(&a, "steps")));
+        // The music volume no longer touches a track that left the music bus.
+        a.set_music_volume(0.0);
+        assert!((vol(&a, "steps") - 0.1).abs() < 1e-6);
+        assert!(!a.assign_track_bus("steps", "nope"));
+        assert!(!a.set_bus_gain("nope", 0.5));
+        assert_eq!(a.track_bus("steps"), Some("footsteps"));
+    }
+
+    #[test]
+    fn bus_mute_and_solo_reach_the_backend() {
+        let mut a = engine();
+        a.add_track("m", loop_of(1.0));
+        a.add_track("s", loop_of(1.0));
+        a.assign_track_bus("s", "sfx");
+        a.set_bus_muted("master", true);
+        assert_eq!((vol(&a, "m"), vol(&a, "s")), (0.0, 0.0));
+        a.set_bus_muted("master", false);
+        assert_eq!((vol(&a, "m"), vol(&a, "s")), (1.0, 1.0));
+        // Solo the sfx bus: music goes quiet, sfx stays.
+        a.set_bus_solo("sfx", true);
+        assert_eq!((vol(&a, "m"), vol(&a, "s")), (0.0, 1.0));
+        // Mute still beats solo.
+        a.set_bus_muted("sfx", true);
+        assert_eq!(vol(&a, "s"), 0.0);
+        a.set_bus_muted("sfx", false);
+        a.set_bus_solo("sfx", false);
+        // Track solo: only the soloed track plays; music_volume composes.
+        a.set_track_solo("m", true);
+        assert_eq!((vol(&a, "m"), vol(&a, "s")), (1.0, 0.0));
+        a.set_music_volume(0.5);
+        assert_eq!(vol(&a, "m"), 0.5);
+        a.set_track_solo("m", false);
+        assert_eq!((vol(&a, "m"), vol(&a, "s")), (0.5, 1.0));
+        assert_eq!(a.track_solo("m"), Some(false));
+        // Bus changes with a fade running still land on the final value.
+        a.fade_track("m", 0.5, 1.0);
+        a.set_bus_gain("master", 0.5);
+        a.advance(1.0);
+        assert!((vol(&a, "m") - 0.125).abs() < 1e-6);
+    }
+
+    #[test]
+    fn one_shots_follow_the_sfx_and_ui_buses() {
+        let mut a = engine();
+        a.play_tone(440.0, 0.1);
+        a.play_samples(&[0.1; 8], 1000);
+        a.set_sfx_volume(0.5);
+        a.play_tone(440.0, 0.1);
+        a.set_bus_gain("master", 0.5);
+        a.play_tone(440.0, 0.1);
+        a.play_samples_on("ui", &[0.1; 8], 1000);
+        a.set_bus_muted("sfx", true);
+        a.play_tone(440.0, 0.1); // muted: never reaches the backend
+        a.play_samples_on("nope", &[0.1; 8], 1000); // unknown bus: silent
+        let tones: Vec<f32> = a.backend().tones.borrow().iter().map(|t| t.1).collect();
+        assert_eq!(tones, [1.0, 0.5, 0.25]);
+        let shots: Vec<f32> = a.backend().oneshots.borrow().iter().map(|t| t.1).collect();
+        assert_eq!(shots, [1.0, 0.5]); // sfx at 1.0, then ui under master 0.5
+        assert_eq!(a.sfx_volume(), 0.5);
+    }
+
+    #[test]
+    fn removing_a_bus_rehomes_its_tracks_and_routes_apply_to_new_tracks() {
+        let mut a = engine();
+        a.add_bus("amb", "music").unwrap();
+        a.set_bus_gain("amb", 0.5);
+        // Route set before the track exists; applied when it is created.
+        assert!(a.assign_track_bus("rain", "amb"));
+        a.add_track("rain", loop_of(1.0));
+        assert_eq!(a.track_bus("rain"), Some("amb"));
+        assert_eq!(vol(&a, "rain"), 0.5);
+        a.set_bus_parent("amb", "sfx").unwrap();
+        a.set_bus_gain("sfx", 0.5);
+        assert_eq!(vol(&a, "rain"), 0.25);
+        assert!(a.set_bus_parent("sfx", "amb").is_err()); // cycle
+        a.remove_bus("amb").unwrap();
+        assert_eq!(a.track_bus("rain"), Some("sfx"));
+        assert_eq!(vol(&a, "rain"), 0.5);
+        assert!(a.remove_bus("music").is_err());
+        // The route died with the bus: a new "rain" lands on the default bus.
+        a.add_track("rain", loop_of(1.0));
+        assert_eq!(a.track_bus("rain"), Some("music"));
+    }
+
+    #[test]
+    fn mixer_settings_roundtrip_through_ron_and_apply_live() {
+        let mut a = engine();
+        a.add_bus("amb", "music").unwrap();
+        a.set_bus_gain("amb", 0.25);
+        a.set_bus_gain("master", 0.5);
+        a.set_bus_muted("ui", true);
+        a.assign_track_bus("rain", "amb");
+        let text = a.mixer_settings().to_ron().unwrap();
+        assert!(text.contains("amb"));
+
+        let mut b = engine();
+        b.add_track("rain", loop_of(1.0)); // exists before settings load
+        let s = MixerSettings::from_ron(&text).unwrap();
+        assert!(b.apply_mixer_settings(&s).is_empty());
+        assert_eq!(b.bus_gain("amb"), Some(0.25));
+        assert_eq!(b.track_bus("rain"), Some("amb"));
+        assert_eq!(vol(&b, "rain"), 0.125); // 1 * 0.25 * 0.5 pushed to the backend
+        assert_eq!(b.mixer_settings(), a.mixer_settings());
+
+        let path = std::env::temp_dir().join(format!("jame_engine_mixer_{}.ron", std::process::id()));
+        a.save_mixer_settings(&path).unwrap();
+        let mut c = engine();
+        assert!(c.load_mixer_settings(&path).unwrap().is_empty());
+        assert_eq!(c.mixer_settings(), a.mixer_settings());
+        let _ = std::fs::remove_file(&path);
+        assert!(c.load_mixer_settings(&path).is_err());
     }
 }

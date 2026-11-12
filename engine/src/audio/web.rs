@@ -123,6 +123,13 @@ fn decode_wav(bytes: &[u8]) -> anyhow::Result<Vec<f32>> {
 /// Browser playback: an SDL2 audio callback mixing every track and one-shot
 /// at `RATE`. The mixer state is a process-wide static because the SDL
 /// callback is a bare C function.
+///
+/// **Spatial audio here is gain/distance only.** The device is opened mono, so
+/// there is no stereo image to pan: `set_track_pan`, `set_track_pitch` and
+/// `track_level` keep their trait defaults (ignored / ignored / `None`) and
+/// `supports_pan()` is `false`. Spatial voices still get distance, cone and
+/// bus attenuation through the track volume; the mixer panel shows gains
+/// without level meters. (The native `rodio` backend pans, pitches and meters.)
 pub struct WebBackend;
 
 impl WebBackend {

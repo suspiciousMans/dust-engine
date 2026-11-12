@@ -138,6 +138,10 @@ pub struct Track {
     pub len_secs: f64,
     /// Offset against the shared loop clock (see `LoopClock`).
     pub phase: f64,
+    /// Mixer bus this track plays through (see `mixer`).
+    pub bus: String,
+    /// Solo flag (see `Mixer::effective_gain`).
+    pub solo: bool,
 }
 
 impl Track {
@@ -177,6 +181,8 @@ impl TrackBank {
             looped,
             len_secs,
             phase,
+            bus: super::mixer::MUSIC_BUS.to_string(),
+            solo: false,
         });
         (id, replaced)
     }
@@ -204,6 +210,10 @@ impl TrackBank {
 
     pub fn iter(&self) -> impl Iterator<Item = &Track> {
         self.tracks.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Track> {
+        self.tracks.iter_mut()
     }
 
     pub fn len(&self) -> usize {
