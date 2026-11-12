@@ -550,6 +550,124 @@ For tests, `AudioEngine::with_manual_time(NullBackend::new())` plus
 `advance(dt)` runs the same logic with no device. The web backend has only
 been type-checked, never built.
 
+## Spatial audio and mixer
+
+Everything below lives in `engine::audio` and works on any backend; with
+`NullBackend` it runs with no device (use `AudioEngine::with_manual_time`).
+
+### Mixer buses
+
+Buses form a tree under `master` (`MASTER_BUS`); built-ins are `music`,
+`sfx` and `ui` (`MUSIC_BUS`, `SFX_BUS`, `UI_BUS`). Each has gain 0..=1, mute
+and solo. A track's effective gain is **track gain × mute × every bus gain on
+its chain up to master**, with solo silencing everything outside the soloed
+scope (`track_effective_gain(name)` reports exactly what the backend is told).
+
+```rust
+audio.add_bus("footsteps", SFX_BUS)?;                // Result<(), MixerError>
+audio.set_bus_gain("sfx", 0.5);                      // -> bool (false: unknown bus)
+audio.set_bus_muted("music", true);
+audio.set_bus_solo("sfx", true);
+audio.assign_track_bus("drums", "sfx");              // -> bool; also applies to a track of that name created later
+audio.set_track_solo("drums", true);
+audio.track_effective_gain("drums");                 // Option<f32>
+audio.play_samples_on("ui", &samples, 44_100);       // one-shot through a bus
+audio.save_mixer_settings(path)?;                    // RON: buses + track routes
+audio.load_mixer_settings(path)?;                    // -> Vec<String> warnings
+```
+
+### Spatial voices
+
+```rust
+pub fn set_listener(&mut self, listener: Listener);
+pub fn play_at(&mut self, source: impl Into<LoopBuffer>, position: Vec3, params: Emitter) -> SpatialHandle;
+pub fn add_spatial_track(&mut self, name: &str, source: impl Into<LoopBuffer>, emitter: Emitter) -> SpatialHandle;
+pub fn set_max_spatial_voices(&mut self, max: usize);   // default DEFAULT_MAX_SPATIAL_VOICES = 32
+pub fn spatial_params(&self, handle: &SpatialHandle) -> Option<SpatialParams>;
+```
+
+`Listener { position, forward, up, velocity }` (`Listener::from_rotation(pos,
+quat)` for a camera: forward is -Z, up +Y). `Emitter` carries
+`min_distance`/`max_distance`, `Rolloff::{Inverse, Linear, Exponential}` +
+`rolloff_factor`, an optional `Cone`, `doppler_factor`, optional `velocity`
+and `rear_attenuation`; build it with `Emitter::at(pos).with_distances(1.0,
+30.0).with_rolloff(Rolloff::Linear, 1.0)`. `SpatialHandle` (`Clone`,
+`Send + Sync`) offers `set_position`, `set_velocity`, `set_emitter`,
+`is_alive`, `stop`, `stop_when_dropped`. `add_spatial_track` loops on the
+shared loop clock like `add_track`. The listener and handle positions are
+applied by the next `audio.update()` / `advance(dt)`.
+
+Per voice the engine computes distance/cone gain (folded into the track
+volume, so buses and solo apply), an equal-power pan (`left² + right² = 1`)
+and a doppler pitch. At most `max_spatial_voices` play at once; a new voice
+over the bound steals the one with the lowest *effective* gain (ties: the
+oldest), and the thief's handle is dead if it would itself be the quietest.
+One-shot `play_at` voices free their slot when they finish.
+
+Backend support (`AudioBackend` additive methods, all default-bodied):
+
+| Backend | pan | pitch | `track_level` |
+|---|---|---|---|
+| `NativeBackend` (rodio) | yes: mono buffers are expanded to 2 channels, per-channel gain | yes (`Sink::set_speed`, 0.1..4) | yes, post-fader peak |
+| `NullBackend` | recorded (`pan(id)`, `pitch(id)`) | recorded | settable via `levels` |
+| `WebBackend` (SDL2 mixer, mono) | **no: gain/distance only** | no | `None` |
+
+### ECS: `AudioEmitter` and the listener
+
+```rust
+pub fn audio_spatial_system<B: AudioBackend + 'static>(ctx: &mut SystemCtx<'_>);
+pub const AUDIO_SPATIAL_SYSTEM: &str = "audio_spatial";
+```
+
+```rust
+resources.insert(AudioContext::new()?);               // skip when there is no device: the system is then a no-op
+schedule.add_system(AUDIO_SPATIAL_SYSTEM, audio_spatial_system::<PlatformBackend>);
+
+world.spawn((Transform::from_position(Vec3::new(4.0, 0.0, 0.0)),
+             AudioEmitter::looped((samples, 44_100)).on_bus("sfx")));
+world.spawn((Transform::default(), AudioListener)); // else the first Camera + Transform is the listener
+// per frame, after schedule.run(..):
+resources.get_mut::<AudioContext>().unwrap().update();
+```
+
+`AudioEmitter::{new, looped, once, on_bus, with_emitter}` with public
+`source`, `looped`, `emitter`, `bus`, `playing`, `track_velocity`, `handle`.
+The system starts a `playing` emitter, moves its voice with the entity's
+`Transform` (velocity measured from the position change, for doppler), clears
+`playing` when a one-shot ends or the voice is stolen (it never restarts by
+itself), and sets the listener from the `AudioListener` entity (or camera)
+with measured velocity. Despawning the entity stops its looping voice. The
+system does not call `update()`; the host does, once per frame.
+
+### Mixer panel (egui)
+
+```rust
+pub fn draw_mixer_panel<B: AudioBackend>(ui: &mut egui::Ui, audio: &mut AudioEngine<B>, state: &mut MixerPanelState) -> Vec<MixerEdit>;
+```
+
+Bus strips (vertical fader, M, S, resulting gain) and one row per named track
+(bus picker, gain, M, S, effective gain, level meter). Meters are drawn only
+when the backend reports `track_level` (native); otherwise the panel shows
+gains only. Edits apply to the engine immediately and are also returned;
+`state.queue.push(MixerEdit::BusGain { .. })` feeds an edit in from code. Call
+it from a host tab (the module docs of `engine::audio` show the full
+`ShellHost::tab_ui` wiring):
+
+```rust
+fn tab_ui(&mut self, tab: &EditorTab, _world: &mut World, ui: &mut egui::Ui) -> bool {
+    match (tab, self.audio.as_mut()) {
+        (EditorTab::Host(name), Some(audio)) if name == "Mixer" => {
+            draw_mixer_panel(ui, audio, &mut self.mixer_ui);
+            true
+        }
+        _ => false,
+    }
+}
+```
+
+Tracks whose names start with `@` (spatial one-shots, emitters) are not
+listed. Nothing in the repo adds a "Mixer" tab yet; hosts opt in.
+
 ## Trigger volumes
 
 A `Collider` can be marked `is_trigger: true` — it's never physically solid:
