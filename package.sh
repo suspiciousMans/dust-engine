@@ -72,5 +72,10 @@ for folder in assets profiles levels rigs classes scripts sfx music; do
     fi
 done
 
+# Script build caches (.ox-build) are machine-specific; the game rebuilds its
+# Oxidized scripts on first run (needs `oxidized` + `rustc`, see
+# docs/SCRIPTING-OXIDIZED.md section 7).
+find "$dist_dir" -name .ox-build -type d -prune -exec rm -rf {} +
+
 echo "Packaged to $dist_dir"
 (cd "$dist_dir" && find . -mindepth 1 | sed 's|^\./|  |' | sort)

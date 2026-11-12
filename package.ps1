@@ -50,6 +50,10 @@ foreach ($folder in @("assets", "profiles", "levels", "rigs", "classes", "script
     }
 }
 
+# Script build caches (.ox-build) are machine-specific; the game rebuilds its
+# Oxidized scripts on first run (needs oxidized + rustc, see docs/SCRIPTING-OXIDIZED.md section 7).
+Get-ChildItem $distDir -Recurse -Directory -Filter ".ox-build" -Force | Remove-Item -Recurse -Force
+
 Write-Host "Packaged to $distDir" -ForegroundColor Green
 Get-ChildItem $distDir -Recurse | Select-Object -ExpandProperty FullName | ForEach-Object {
     Write-Host "  $($_.Substring($distDir.Length + 1))"
