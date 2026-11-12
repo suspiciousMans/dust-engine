@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::{Quat, Vec3};
 use hecs::Entity;
 
+use super::joints::{Joint, JointKind, DEFAULT_JOINT_ITERATIONS, MAX_SPRING_OMEGA_DT};
 use super::layers::{CollisionLayers, PhysicsMaterial};
 use super::narrow::{collide, shape_bounds, Pose};
 use super::{Collider, ColliderShape, PhysicsParams, RigidBody};
@@ -80,6 +81,8 @@ struct Body {
     material: Option<PhysicsMaterial>,
     lo: Vec3,
     hi: Vec3,
+    /// False for joint-only bodies (no `Collider`): never enter the broadphase.
+    collidable: bool,
 }
 
 pub(crate) fn run_step(
@@ -87,9 +90,29 @@ pub(crate) fn run_step(
     dt: f32,
     params: &PhysicsParams,
     iterations: usize,
+    joint_iterations: usize,
     mut state: Option<&mut SimState>,
 ) -> StepOutput {
     let sleep_cfg = state.as_ref().map(|s| s.sleep).filter(|c| c.enabled);
+
+    // 0. Joints: collect (entity order), wake attached bodies, spring forces.
+    let mut joints: Vec<(Entity, Joint)> = world.query::<&Joint>().iter().map(|(e, j)| (e, *j)).collect();
+    joints.sort_by_key(|(e, _)| *e);
+    let mut jointed: BTreeSet<Entity> = BTreeSet::new();
+    let mut spring_dv: BTreeMap<Entity, Vec3> = BTreeMap::new();
+    for (_, j) in &joints {
+        jointed.insert(j.a);
+        jointed.extend(j.b);
+        if let (JointKind::Spring { rest_length, stiffness, damping }, true) = (j.kind, dt > 0.0) {
+            spring_forces(world, j, rest_length, stiffness, damping, dt, &mut spring_dv);
+        }
+    }
+    if let Some(st) = state.as_deref_mut() {
+        for e in &jointed {
+            st.asleep.remove(e);
+            st.timers.remove(e);
+        }
+    }
 
     // 1. Integrate awake dynamic bodies.
     let mut dyn_ids: Vec<Entity> = world.query::<(&Transform, &RigidBody)>().iter().map(|(e, _)| e).collect();
@@ -109,6 +132,9 @@ pub(crate) fn run_step(
             }
         }
         b.velocity.y -= params.gravity * dt;
+        if let Some(dv) = spring_dv.get(&e) {
+            b.velocity += *dv;
+        }
         let damping = (1.0 - params.linear_damping * dt).max(0.0);
         b.velocity *= damping;
         t.position += b.velocity * dt;
@@ -134,10 +160,50 @@ pub(crate) fn run_step(
                 material: m.copied(),
                 lo: lo - Vec3::splat(BROADPHASE_MARGIN),
                 hi: hi + Vec3::splat(BROADPHASE_MARGIN),
+                collidable: true,
             }
         })
         .collect();
+    if !joints.is_empty() {
+        // Joint endpoints without a Collider still need a body to move.
+        let present: BTreeSet<Entity> = bodies.iter().map(|b| b.entity).collect();
+        for &e in jointed.iter().filter(|e| !present.contains(*e)) {
+            let Ok(mut q) = world.query_one::<(&Transform, Option<&RigidBody>)>(e) else { continue };
+            let Some((t, rb)) = q.get() else { continue };
+            bodies.push(Body {
+                entity: e,
+                shape: ColliderShape::Sphere { radius: 0.0 },
+                rot: t.rotation,
+                pos: t.position,
+                vel: rb.map_or(Vec3::ZERO, |r| r.velocity),
+                grounded: rb.map_or(false, |r| r.grounded),
+                dynamic: rb.is_some(),
+                trigger: false,
+                layers: CollisionLayers::default(),
+                material: None,
+                lo: t.position,
+                hi: t.position,
+                collidable: false,
+            });
+        }
+    }
     bodies.sort_by_key(|b| b.entity);
+    let solvers: Vec<JointSolve> = joints
+        .iter()
+        .filter_map(|(_, j)| {
+            let a = bodies.binary_search_by_key(&j.a, |b| b.entity).ok()?;
+            let b = match j.b {
+                Some(eb) => Some(bodies.binary_search_by_key(&eb, |b| b.entity).ok()?),
+                None => None,
+            };
+            Some(JointSolve { joint: *j, a, b })
+        })
+        .collect();
+    let no_collide: BTreeSet<(Entity, Entity)> = joints
+        .iter()
+        .filter(|(_, j)| !j.collide_connected)
+        .filter_map(|(_, j)| j.b.map(|b| (j.a.min(b), j.a.max(b))))
+        .collect();
 
     // 3. Broadphase: sweep-and-prune on x, then y/z bounds test.
     let mut order: Vec<usize> = (0..bodies.len()).collect();
@@ -149,7 +215,7 @@ pub(crate) fn run_step(
                 break;
             }
             let (a, b) = (&bodies[i], &bodies[j]);
-            if !a.dynamic && !b.dynamic {
+            if !a.dynamic && !b.dynamic || !a.collidable || !b.collidable {
                 continue;
             }
             if a.lo.y > b.hi.y || b.lo.y > a.hi.y || a.lo.z > b.hi.z || b.lo.z > a.hi.z {
@@ -162,6 +228,9 @@ pub(crate) fn run_step(
         }
     }
     pairs.sort_unstable();
+    if !no_collide.is_empty() {
+        pairs.retain(|&(i, j)| !no_collide.contains(&(bodies[i].entity, bodies[j].entity)));
+    }
 
     let mut out = StepOutput::default();
 
@@ -183,7 +252,13 @@ pub(crate) fn run_step(
     }
     out.trigger_overlaps.sort();
 
-    // 5. Solid contacts.
+    // 5. Joints, then solid contacts (each contact iteration is followed by a
+    //    joint pass so the last word is the constraint).
+    if !solvers.is_empty() && dt > 0.0 {
+        for _ in 0..joint_iterations {
+            solve_joints(&mut bodies, &solvers, dt);
+        }
+    }
     for iter in 0..iterations.max(1) {
         for &(i, j) in &pairs {
             let (lo_i, hi_i) = bodies.split_at_mut(j);
@@ -247,6 +322,9 @@ pub(crate) fn run_step(
                 }
             }
         }
+        if !solvers.is_empty() && dt > 0.0 {
+            solve_joints(&mut bodies, &solvers, dt);
+        }
     }
 
     // 6. Write back dynamic bodies, update sleep state.
@@ -264,7 +342,7 @@ pub(crate) fn run_step(
         }
     }
     if let (Some(cfg), Some(st)) = (sleep_cfg, state.as_deref_mut()) {
-        for b in bodies.iter().filter(|b| b.dynamic && !b.trigger) {
+        for b in bodies.iter().filter(|b| b.dynamic && !b.trigger && b.collidable && !jointed.contains(&b.entity)) {
             if st.asleep.contains_key(&b.entity) {
                 continue;
             }
@@ -286,6 +364,117 @@ pub(crate) fn run_step(
         st.timers.retain(|e, _| world.contains(*e));
     }
     out
+}
+
+struct JointSolve {
+    joint: Joint,
+    a: usize,
+    b: Option<usize>,
+}
+
+fn anchor_world(pos: Vec3, rot: Quat, local: Vec3) -> Vec3 {
+    pos + rot * local
+}
+
+/// Reads an endpoint's (anchor position, velocity, inverse mass) from the world.
+fn endpoint(world: &hecs::World, e: Entity, local: Vec3) -> Option<(Vec3, Vec3, f32)> {
+    let mut q = world.query_one::<(&Transform, Option<&RigidBody>)>(e).ok()?;
+    let (t, rb) = q.get()?;
+    Some((anchor_world(t.position, t.rotation, local), rb.map_or(Vec3::ZERO, |r| r.velocity), if rb.is_some() { 1.0 } else { 0.0 }))
+}
+
+/// Accumulates the velocity change a spring joint applies this step.
+fn spring_forces(
+    world: &hecs::World,
+    j: &Joint,
+    rest: f32,
+    stiffness: f32,
+    damping: f32,
+    dt: f32,
+    dv: &mut BTreeMap<Entity, Vec3>,
+) {
+    let Some((pa, va, wa)) = endpoint(world, j.a, j.anchor_a) else { return };
+    let (pb, vb, wb) = match j.b {
+        Some(eb) => match endpoint(world, eb, j.anchor_b) {
+            Some(x) => x,
+            None => return,
+        },
+        None => (j.anchor_b, Vec3::ZERO, 0.0),
+    };
+    let w = wa + wb;
+    if w == 0.0 {
+        return;
+    }
+    let d = pb - pa;
+    let len = d.length();
+    if len < 1e-6 {
+        return;
+    }
+    let n = d / len;
+    // Clamp to the semi-implicit-Euler stable range.
+    let k = stiffness.clamp(0.0, (MAX_SPRING_OMEGA_DT / dt).powi(2) / w);
+    let c = damping.clamp(0.0, 1.0 / (w * dt));
+    let f = k * (len - rest) + c * (vb - va).dot(n);
+    // Unit masses: dv = F * dt. `a` is pulled toward `b` for positive f.
+    if wa > 0.0 {
+        *dv.entry(j.a).or_insert(Vec3::ZERO) += n * (f * dt);
+    }
+    if let (Some(eb), true) = (j.b, wb > 0.0) {
+        *dv.entry(eb).or_insert(Vec3::ZERO) -= n * (f * dt);
+    }
+}
+
+/// One projection pass over the rod / rope / pin joints (springs are forces).
+fn solve_joints(bodies: &mut [Body], solvers: &[JointSolve], dt: f32) {
+    for s in solvers {
+        let (pa, wa) = {
+            let a = &bodies[s.a];
+            (anchor_world(a.pos, a.rot, s.joint.anchor_a), if a.dynamic { 1.0 } else { 0.0 })
+        };
+        let (pb, wb) = match s.b {
+            Some(i) => {
+                let b = &bodies[i];
+                (anchor_world(b.pos, b.rot, s.joint.anchor_b), if b.dynamic { 1.0 } else { 0.0 })
+            }
+            None => (s.joint.anchor_b, 0.0),
+        };
+        let w = wa + wb;
+        if w == 0.0 {
+            continue;
+        }
+        let d = pb - pa; // from a to b
+        // `err` points the way `a` must move (b moves the opposite way).
+        let err = match s.joint.kind {
+            JointKind::Pin => d,
+            JointKind::Distance { length } => {
+                let len = d.length();
+                if len < 1e-9 {
+                    continue;
+                }
+                d * ((len - length) / len)
+            }
+            JointKind::Rope { max_length } => {
+                let len = d.length();
+                if len <= max_length || len < 1e-9 {
+                    continue;
+                }
+                d * ((len - max_length) / len)
+            }
+            JointKind::Spring { .. } => continue,
+        };
+        if wa > 0.0 {
+            let c = err * (wa / w);
+            let a = &mut bodies[s.a];
+            a.pos += c;
+            a.vel += c / dt;
+        }
+        if let (Some(i), true) = (s.b, wb > 0.0) {
+            let c = err * (-wb / w);
+            let b = &mut bodies[i];
+            b.pos += c;
+            b.vel += c / dt;
+        }
+    }
 }
 
 /// Velocity response against an immovable surface with normal `n` (pointing at the body).
@@ -314,6 +503,8 @@ pub struct PhysicsWorld {
     /// Cap on substeps per `update` (spiral-of-death guard).
     pub max_substeps: u32,
     pub solver_iterations: usize,
+    /// Joint projection passes before contacts each step (see [`super::Joint`]).
+    pub joint_iterations: usize,
     accumulator: f32,
     tick: u64,
     state: SimState,
@@ -329,6 +520,7 @@ impl PhysicsWorld {
             fixed_dt: 1.0 / 60.0,
             max_substeps: 8,
             solver_iterations: 4,
+            joint_iterations: DEFAULT_JOINT_ITERATIONS,
             accumulator: 0.0,
             tick: 0,
             state: SimState::default(),
@@ -393,7 +585,7 @@ impl PhysicsWorld {
         for (e, (t, _)) in world.query::<(&Transform, &RigidBody)>().iter() {
             self.prev.insert(e, t.position);
         }
-        let out = run_step(world, self.fixed_dt, &self.params, self.solver_iterations, Some(&mut self.state));
+        let out = run_step(world, self.fixed_dt, &self.params, self.solver_iterations, self.joint_iterations, Some(&mut self.state));
         self.tick += 1;
         self.last_contacts = out.contacts;
 
