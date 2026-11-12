@@ -1655,6 +1655,11 @@ impl HudState {
 }
 ```
 
+> **Sandbox no longer calls `draw_hud`/`draw_pause_menu`.** Its HUD and pause
+> menu are RON documents (see "UI Designer: RON documents in a game" below);
+> `HudState` still feeds them. `draw_hud`/`draw_pause_menu` stay for
+> `walkaround_demo` and `mushroom_man`, which still draw them by hand.
+
 `engine::ui::draw_hud(ctx, hud)` renders it as a fixed top-left
 `egui::Area` — title, each bar as an `egui::ProgressBar`, toasts stacked
 below and fading out as their remaining time runs low. The sandbox calls
@@ -1703,6 +1708,84 @@ anchor offset, a slider for bar width, color pickers for the bar fill and
 toast text, and a slider for title font size. Like Render Params, changes
 apply live (you'll see it update in Play mode immediately) and are
 captured by "Save"/"Save As New" on the shader profile.
+
+## UI Designer: RON documents in a game
+
+The in-game HUD and pause menu can be plain RON documents designed in the
+editor's **UI Designer** tab and loaded by the game. `games/sandbox` does this
+for both screens: nothing in its Rust code draws them.
+
+**Workflow (RON -> game):**
+
+1. The game keeps its documents in `<asset root>/assets/ui/` (sandbox:
+   `games/sandbox/assets/ui/hud.ron`, `pause_menu.ron`) and loads each with
+   `engine::ui_designer::UiScreen::load(name, path, fallback)` at startup. A
+   missing or invalid file falls back to `examples::hud_doc()` /
+   `pause_menu_doc()` and logs a warning; it never aborts the game.
+2. Every frame the game calls `screen.poll()` (one `stat`), publishes its state
+   as bindings (`UiBindings::set_f32/set_bool/set_text`), then calls
+   `screen.show(ctx, &bindings, area)`. `area` is the whole window, or the
+   Viewport tab's rect when the editor is docked (the HUD is drawn into the
+   viewport there). `show` returns a `UiFrameResult` whose `events` are the
+   button/toggle/slider events of this frame.
+3. The game maps event names to actions (`games/sandbox/src/game_ui.rs`,
+   `action_from_event`): `resume_game`, `exit_to_editor`, `restart_level`,
+   `quit_game`, `toggle_stats` (carries the new bool).
+4. `EditorRuntime::set_ui_dir(<asset root>/assets/ui)` points the UI Designer
+   tab at the same folder: pick `hud.ron` in the Document box, edit, Save.
+   `poll()` sees the changed file and the running game swaps the document in
+   without a restart. Edits made with an external text editor reload the same
+   way. A file that fails to parse (for example saved half-written) is
+   reported in the log once and the previous document stays live until the next
+   good save.
+5. `DUST_PLAY=1` starts the sandbox directly in Play and `DUST_PAUSED=1` in the
+   pause menu, which is handy for checking a document without keyboard input.
+
+**Bindings.** A node's `bindings` map (`property -> value name`) connects it to
+values the game publishes. Property names the designer understands:
+
+| Property | Node kinds | Value / template |
+|---|---|---|
+| `text` | Label, Button, Toggle, ProgressBar overlay | template: `"HP {player.health:.0}/{player.max}"`; `{name:.N}` fixes N decimals, `{{`/`}}` escape braces; unknown names stay visible as written |
+| `value`, `min`, `max` | ProgressBar, Slider | value name (a number); the bar fill is `(value-min)/(max-min)` |
+| `checked` | Toggle | value name (truthy) |
+| `visible`, `enabled` | any | value name, `!name` negates; a hidden node takes no layout space |
+| `opacity` | any | value name, number 0..1 (multiplied down the tree) |
+| `class` | any | value name holding text; its words are added as style classes after the node's own `classes` (a bar turns red with `bar_low`) |
+
+Layout inside a document: anchors + offsets (free layout), `margin`/`padding`,
+`HStack`/`VStack`/`Grid`, `Fixed`/`Fill`/`Fit` sizes, `ScaleWithScreen` scaling.
+
+**Values the sandbox publishes** (`game_ui.rs`, `Sandbox::publish_game_ui`):
+
+| Value | Meaning |
+|---|---|
+| `hud.title`, `hud.has_title` | `HudState::title` |
+| `hud.bar.<name>` (0..1), `hud.bar.<name>_pct`, `hud.bar.<name>.visible` | each `HudState` bar, name lower-cased (`health`) |
+| `hud.bar.health.class` | `"bar_low"` below 30 % health, else empty |
+| `hud.toast.{0,1,2}.text / .alpha / .visible` | first three `HudState` toasts; alpha is the old fade (`min(remaining, 1)`) |
+| `play.show_hint`, `play.esc_hint`, `play.f3_hint` | controls chip words (hidden when docked) |
+| `level.name`, `perf.fps` (smoothed), `perf.ms` | frame stats |
+| `hud.show_stats` | state of the pause menu's "Show frame stats" toggle |
+| `net.active`, `net.status` | hosting/joined state and the multiplayer status line |
+| `editor_available` | pause menu: "Exit to Editor" vs "Restart Level" |
+
+Limits to know: there is no repeater/list node, so toasts use a fixed number of
+slots (three); keyboard/gamepad focus navigation exists in the designer
+(`UiFocus`) but the sandbox does not wire it to its pause menu, so the menu is
+mouse-only; the multiplayer and player-appearance panels that open next to the
+pause menu are still hand-coded egui windows, which is why the sandbox pause
+menu has no full-screen dim layer.
+
+### Editor Settings tab
+
+The shell's **Settings** tab edits `EditorPrefs`: keymap preset, UI scale, font
+size and font family (default or monospace), viewport grid, the seven theme
+colours, layout presets, **Reset theme** and **Reset all settings to defaults**.
+Changes are written to `<config dir>/editor_prefs.ron` shortly after you let
+go of the mouse (`PrefsAutosave`), and the dock layout is written when the
+editor closes (`EditorRuntime::save_layout`). The config dir is chosen by the
+game (sandbox: `<asset root>/.editor`), so settings are per game, not per user.
 
 ## Save/load (checkpoints)
 
