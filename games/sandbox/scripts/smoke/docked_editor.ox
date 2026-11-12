@@ -1,0 +1,89 @@
+// Smoke test for the docked editor (the sandbox's only editor): F2 and F1 open
+// it, F4 closes/opens it, Play (F3) with W held and the mouse captured, Stop
+// (F3, scene restored via apply_level), close it.
+// Debug builds only (the docked editor does not exist in release).
+//   RUST_LOG=info cargo run -p sandbox -- --smoke-test scripts/smoke/docked_editor.ox
+// The script cannot read game state, so the open/close checks are log lines.
+// A passing run prints exactly these (in order) in addition to "passed":
+//   docked editor opened   (F2)
+//   docked editor closed   (F4)
+//   docked editor opened   (F1)
+//   docked editor closed   (F4)
+//   docked editor opened   (F4)
+//   docked editor closed   (F4, at the end)
+// scripts/smoke/check_docked_editor.sh greps for them.
+
+# Phase bookkeeping. Script functions are stateless, so the current phase and
+# the time it started live host-side (get_var/set_var).
+fn enter_phase(next: Float, t: Float) {
+    set_var("phase", next)
+    set_var("phase_started_at", t)
+    log("entering phase " + str(next))
+}
+
+fn seconds_in_phase(t: Float) -> Float {
+    return t - get_var("phase_started_at", 0.0)
+}
+
+fn tap(key: String) {
+    press(key)
+    release(key)
+}
+
+fn tick(frame: Int, t: Float) {
+    let phase = get_var("phase", 0.0)
+    if phase == 0.0 {
+        if seconds_in_phase(t) > 0.5 {
+            tap("F2")
+            enter_phase(1.0, t)
+        }
+    } else if phase == 1.0 {
+        // Let the dock lay out and render a few frames in Edit mode.
+        if seconds_in_phase(t) > 0.8 {
+            tap("F4")
+            enter_phase(2.0, t)
+        }
+    } else if phase == 2.0 {
+        if seconds_in_phase(t) > 0.4 {
+            tap("F1")
+            enter_phase(3.0, t)
+        }
+    } else if phase == 3.0 {
+        if seconds_in_phase(t) > 0.8 {
+            tap("F4")
+            enter_phase(4.0, t)
+        }
+    } else if phase == 4.0 {
+        if seconds_in_phase(t) > 0.4 {
+            tap("F4")
+            enter_phase(5.0, t)
+        }
+    } else if phase == 5.0 {
+        if seconds_in_phase(t) > 1.0 {
+            tap("F3")
+            enter_phase(6.0, t)
+        }
+    } else if phase == 6.0 {
+        if seconds_in_phase(t) > 0.5 {
+            press("W")
+            enter_phase(7.0, t)
+        }
+    } else if phase == 7.0 {
+        if seconds_in_phase(t) > 1.0 {
+            release("W")
+            tap("F3")
+            enter_phase(8.0, t)
+        }
+    } else if phase == 8.0 {
+        // Edit mode again; give the restored scene a few frames, then close the dock.
+        if seconds_in_phase(t) > 1.0 {
+            tap("F4")
+            enter_phase(9.0, t)
+        }
+    } else if phase == 9.0 {
+        if seconds_in_phase(t) > 0.5 {
+            log("docked editor smoke test passed")
+            finish(true)
+        }
+    }
+}

@@ -322,6 +322,11 @@ fn smoke_script_without_tick_or_with_panic_is_reported() {
     let e = SmokeDriver::load_with(&tc, &no_tick, &dir.join("out")).err().expect("must fail");
     assert!(e.contains("must define `fn tick"), "{e}");
 
+    let pss = dir.join("old.pss");
+    std::fs::write(&pss, "fn tick() {}\n").unwrap();
+    let e = SmokeDriver::load_with(&tc, &pss, &dir.join("out")).err().expect("must fail");
+    assert!(e.contains("must be Oxidized `.ox`"), "{e}");
+
     let boom = dir.join("b.ox");
     std::fs::write(&boom, "fn tick(frame: Int, t: Float) {\n    assert(false, \"kaboom\")\n}\n").unwrap();
     let mut d = SmokeDriver::load_with(&tc, &boom, &dir.join("out")).unwrap();

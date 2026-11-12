@@ -33,8 +33,6 @@ pub mod screen_effect;
 pub mod script;
 pub mod shader;
 pub mod skeletal;
-#[cfg(feature = "legacy-pss")]
-pub mod testkit;
 pub mod telemetry;
 pub mod texture;
 pub mod time;

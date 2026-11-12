@@ -7587,7 +7587,7 @@ fn show_fatal_error_dialog(message: &str) {
     }
 }
 
-/// `--smoke-test <path>` runs a compiled `.pss` script driving the game
+/// `--smoke-test <path>` runs an Oxidized `.ox` script (`tick(frame, t)`) driving the game
 /// instead of a human (see `engine::app::App::run_scripted`), exiting with
 /// the script's pass/fail code — CI-friendly (recommend
 /// `SDL_VIDEODRIVER=dummy`, since there's no headless mode). Any other
@@ -7611,16 +7611,19 @@ fn main() -> anyhow::Result<()> {
     }));
 
     if let Some(script_path) = smoke_test_path_from_args() {
-        let source = std::fs::read_to_string(&script_path)?;
-        let script = match engine::script::Interpreter::compile(&source) {
+        let script = match engine::script::ox::SmokeDriver::load(&script_path) {
             Ok(script) => script,
-            Err(errors) => {
-                for err in &errors {
-                    log::error!("smoke test script parse error: {err}");
-                }
+            Err(err) => {
+                log::error!("smoke test script {script_path:?}: {err}");
                 std::process::exit(1);
             }
         };
+        log::info!(
+            "smoke test '{}' built in {:.1}s{}",
+            script.name,
+            script.build_time.as_secs_f32(),
+            if script.cached { " (cached)" } else { "" }
+        );
         let code = App::run_scripted("Jame Engine Sandbox", 1280, 720, Sandbox::new(), script)?;
         std::process::exit(code);
     }

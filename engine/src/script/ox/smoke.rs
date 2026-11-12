@@ -151,6 +151,12 @@ impl SmokeDriver {
     }
 
     pub fn load_with(tc: &Toolchain, script: &Path, out_dir: &Path) -> Result<Self, String> {
+        if script.extension().map_or(true, |e| e != "ox") {
+            return Err(format!(
+                "{}: smoke scripts must be Oxidized `.ox` files (the `.pss` format was retired; port it, see docs/SCRIPTING-OXIDIZED.md §8)",
+                script.display()
+            ));
+        }
         let started = std::time::Instant::now();
         let built = build_script(tc, script, out_dir, &BuildOptions { profile: Profile::Smoke, ..Default::default() })
             .map_err(|d| format!("smoke script failed to build:\n{d}"))?;
