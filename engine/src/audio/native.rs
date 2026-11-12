@@ -327,4 +327,42 @@ mod tests {
             b.stop_track(TrackId(99));
         }
     }
+
+    /// Smoke test with a real device: plays a short, quiet generated tone
+    /// through `play_at`, hard to the listener's right, and checks that the
+    /// rodio backend actually pulled samples (its peak meter moves) and that
+    /// the pan reached the source. Returns silently when there is no device.
+    #[test]
+    fn spatial_tone_plays_through_play_at_when_a_device_exists() {
+        use crate::audio::spatial::{Emitter, Listener};
+        use glam::Vec3;
+
+        let Ok(mut audio) = AudioContext::new() else { return };
+        let rate = 44_100u32;
+        let tone: Vec<f32> = (0..rate as usize / 5) // 0.2 s of 440 Hz, amplitude 0.08
+            .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / rate as f32).sin() * 0.08)
+            .collect();
+        audio.set_listener(Listener::at(Vec3::ZERO)); // faces -Z, +X is right
+        let h = audio.play_at((tone, rate), Vec3::new(2.0, 0.0, 0.0), Emitter::default());
+        assert!(h.is_alive());
+        let params = audio.spatial_params(&h).expect("voice registered");
+        let (l, r) = params.channel_gains();
+        assert!(r > l, "source on the right pans right ({l}, {r})");
+        assert_eq!(audio.backend().supports_pan(), true);
+
+        // The audio thread publishes the peak every 512 samples (~12 ms).
+        let mut heard = 0.0f32;
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(20));
+            audio.update();
+            heard = heard.max(audio.track_level(h.name()).unwrap_or(0.0));
+            if heard > 0.0 {
+                break;
+            }
+        }
+        assert!(heard > 0.0, "device is open but no samples were pulled in 1 s");
+        h.stop();
+        audio.update();
+        assert!(!h.is_alive());
+    }
 }
