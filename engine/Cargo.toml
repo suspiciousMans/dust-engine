@@ -5,12 +5,6 @@ edition = "2021"
 license = "MIT"
 publish = false
 
-[features]
-# The original .pss interpreter. Default ON until the smoke-test driver scripts
-# (tick/press/finish) have an .ox host; behavior scripts are already converted.
-default = ["legacy-pss"]
-legacy-pss = []
-
 [dependencies]
 sdl2.workspace = true
 glow.workspace = true

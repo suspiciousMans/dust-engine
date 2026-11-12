@@ -1,6 +1,3 @@
-#[cfg(feature = "legacy-pss")]
-use crate::script::{Host, Interpreter, ScriptError, Value};
-
 /// What a script (or a native Rust `Behavior`) can do to the entity it's
 /// attached to, without needing direct access to the ECS `World` or
 /// `AudioContext` — the embedder builds a concrete implementation of this
@@ -42,8 +39,8 @@ pub trait ScriptApi {
 }
 
 /// Programmable per-entity behavior. The exact same trait is implemented
-/// either by `ScriptBehavior` (running an interpreted `.pss` script) or by a
-/// plain Rust type (see `NativeBobBehavior` below) — the game dispatches
+/// either by `script::ox::OxBehavior` (running a compiled Oxidized `.ox`
+/// script) or by a plain Rust type (see `NativeBobBehavior` below) — the game dispatches
 /// through `Behavior` uniformly and never needs to know which kind backed a
 /// given entity. This is what "use Rust the same way the scripting language
 /// would" means in practice: prototype as a script, port to Rust later, and
@@ -70,149 +67,9 @@ pub trait Behavior: Send + Sync {
 /// native, behind one boxed trait object.
 pub struct BehaviorSlot(pub Box<dyn Behavior>);
 
-/// A `Behavior` backed by a compiled script. Bridges the interpreter's
-/// generic `Host` mechanism to the concrete `ScriptApi` for this entity —
-/// see `HostAdapter` below for the exact function names a script can call.
-#[cfg(feature = "legacy-pss")]
-pub struct ScriptBehavior {
-    interpreter: Interpreter,
-}
-
-#[cfg(feature = "legacy-pss")]
-impl ScriptBehavior {
-    pub fn from_source(source: &str) -> Result<Self, Vec<ScriptError>> {
-        Ok(Self { interpreter: Interpreter::compile(source)? })
-    }
-
-    /// Calls a hook function if the script defines one; a script that
-    /// doesn't define e.g. `interact` just does nothing when interacted
-    /// with. Runtime errors are logged and otherwise swallowed — a bug in
-    /// one script's `update` should never crash the game.
-    fn dispatch(&mut self, name: &str, args: &[Value], api: &mut dyn ScriptApi) {
-        let mut adapter = HostAdapter { api };
-        if let Err(err) = self.interpreter.call(name, args, &mut adapter) {
-            log::error!("script error in '{name}': {err}");
-        }
-    }
-}
-
-#[cfg(feature = "legacy-pss")]
-impl Behavior for ScriptBehavior {
-    fn on_ready(&mut self, api: &mut dyn ScriptApi) {
-        self.dispatch("ready", &[], api);
-    }
-
-    fn on_update(&mut self, api: &mut dyn ScriptApi, dt: f32) {
-        self.dispatch("update", &[Value::Number(dt as f64)], api);
-    }
-
-    fn on_interact(&mut self, api: &mut dyn ScriptApi) {
-        self.dispatch("interact", &[], api);
-    }
-
-    fn on_trigger_enter(&mut self, api: &mut dyn ScriptApi, other_name: &str) {
-        self.dispatch("trigger_enter", &[Value::Str(other_name.to_string())], api);
-    }
-
-    fn on_trigger_exit(&mut self, api: &mut dyn ScriptApi, other_name: &str) {
-        self.dispatch("trigger_exit", &[Value::Str(other_name.to_string())], api);
-    }
-}
-
-/// Translates the interpreter's generic native-call mechanism into concrete
-/// `ScriptApi` calls. This is the entire "standard library" a `.pss` script
-/// can see: `log(...)`, `get_x/get_y/get_z()`, `set_position(x,y,z)`,
-/// `move_by(dx,dy,dz)`, `play_tone(freq,duration)`, `play_sfx(path)`,
-/// `time()`, `hud_bar(name,fraction)`, `toast(message,seconds)`,
-/// `screen_flash(r,g,b,strength,fade_in,hold,fade_out)`,
-/// `camera_shake(intensity,duration)`. `Value` has no vector/tuple type, so
-/// position is read as three separate scalar calls rather than one call
-/// returning a triple.
-#[cfg(feature = "legacy-pss")]
-struct HostAdapter<'a> {
-    api: &'a mut dyn ScriptApi,
-}
-
-#[cfg(feature = "legacy-pss")]
-impl Host for HostAdapter<'_> {
-    fn call_native(&mut self, name: &str, args: &[Value]) -> Result<Value, ScriptError> {
-        fn num(args: &[Value], index: usize, fn_name: &str) -> Result<f32, ScriptError> {
-            args.get(index)
-                .and_then(Value::as_number)
-                .map(|n| n as f32)
-                .ok_or_else(|| ScriptError {
-                    message: format!("'{fn_name}' expects a numeric argument at position {index}"),
-                    line: 0,
-                })
-        }
-
-        match name {
-            "log" => {
-                let message = args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ");
-                self.api.log(&message);
-                Ok(Value::Nil)
-            }
-            "get_x" => Ok(Value::Number(self.api.position().0 as f64)),
-            "get_y" => Ok(Value::Number(self.api.position().1 as f64)),
-            "get_z" => Ok(Value::Number(self.api.position().2 as f64)),
-            "set_position" => {
-                self.api.set_position(num(args, 0, name)?, num(args, 1, name)?, num(args, 2, name)?);
-                Ok(Value::Nil)
-            }
-            "move_by" => {
-                self.api.move_by(num(args, 0, name)?, num(args, 1, name)?, num(args, 2, name)?);
-                Ok(Value::Nil)
-            }
-            "play_tone" => {
-                self.api.play_tone(num(args, 0, name)?, num(args, 1, name)?);
-                Ok(Value::Nil)
-            }
-            "play_sfx" => {
-                let Some(Value::Str(path)) = args.first() else {
-                    return Err(ScriptError { message: "'play_sfx' expects a string path first".to_string(), line: 0 });
-                };
-                self.api.play_sfx(path);
-                Ok(Value::Nil)
-            }
-            "time" => Ok(Value::Number(self.api.elapsed() as f64)),
-            "hud_bar" => {
-                let Some(Value::Str(bar_name)) = args.first() else {
-                    return Err(ScriptError { message: "'hud_bar' expects a string name first".to_string(), line: 0 });
-                };
-                self.api.set_hud_bar(bar_name, num(args, 1, name)?);
-                Ok(Value::Nil)
-            }
-            "toast" => {
-                let Some(Value::Str(message)) = args.first() else {
-                    return Err(ScriptError { message: "'toast' expects a string message first".to_string(), line: 0 });
-                };
-                self.api.show_toast(message, num(args, 1, name)?);
-                Ok(Value::Nil)
-            }
-            "screen_flash" => {
-                self.api.screen_flash(
-                    num(args, 0, name)?,
-                    num(args, 1, name)?,
-                    num(args, 2, name)?,
-                    num(args, 3, name)?,
-                    num(args, 4, name)?,
-                    num(args, 5, name)?,
-                    num(args, 6, name)?,
-                );
-                Ok(Value::Nil)
-            }
-            "camera_shake" => {
-                self.api.camera_shake(num(args, 0, name)?, num(args, 1, name)?);
-                Ok(Value::Nil)
-            }
-            _ => Err(ScriptError { message: format!("unknown function '{name}'"), line: 0 }),
-        }
-    }
-}
-
-/// Native-Rust parity example: the identical `Behavior` trait, zero
-/// interpreter involved. Sine-bobs vertically and logs+tones on interact —
-/// deliberately mirroring what `bob_demo.pss` does as a script, so
+/// Native-Rust parity example: the identical `Behavior` trait, no script
+/// involved. Sine-bobs vertically and logs+tones on interact —
+/// deliberately mirroring what `bob_demo.ox` does as a script, so
 /// interacting with both demo cubes side by side makes the parity concrete.
 pub struct NativeBobBehavior {
     phase: f32,

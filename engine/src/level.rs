@@ -81,7 +81,7 @@ pub struct LevelObject {
     /// saved before this field existed still load (as `None`/unanimated).
     #[serde(default)]
     pub animation: Option<AnimationSpec>,
-    /// A `.pss` script to compile and attach as a `Behavior` when spawned,
+    /// An Oxidized `.ox` script to compile and attach as a `Behavior` when spawned,
     /// if any. `#[serde(default)]` so levels saved before this field existed
     /// still load (as `None`/no behavior).
     #[serde(default)]

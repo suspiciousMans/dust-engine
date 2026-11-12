@@ -104,7 +104,7 @@ pub struct LevelObjectMeta {
     pub mesh_source: MeshSource,
     pub texture_path: Option<PathBuf>,
     pub rotation_euler_deg: Vec3,
-    /// Path to the `.pss` script backing this object's `BehaviorSlot`, if
+    /// Path to the `.ox` script backing this object's `BehaviorSlot`, if
     /// any — kept here (mirroring `texture_path`) so the F2 panel and
     /// `build_level_from_ecs` can round-trip it without inspecting the
     /// `BehaviorSlot` component itself.

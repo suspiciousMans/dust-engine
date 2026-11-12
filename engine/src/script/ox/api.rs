@@ -1,5 +1,5 @@
 //! The stable script-facing surface (`OxApi`) and the engine services it
-//! needs that the legacy `behavior::ScriptApi` trait doesn't have (rotation,
+//! needs that the `behavior::ScriptApi` trait doesn't have (rotation,
 //! scale, input, spawn/despawn, tunables, per-entity script variables).
 //!
 //! Scripts only ever see the natives listed in `build::spec::SPEC`; this file
