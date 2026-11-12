@@ -41,10 +41,12 @@ use engine::sdl2::keyboard::Keycode;
 use engine::material::{Material, MaterialVariant};
 use engine::shader::{shader_files_for, ShaderVariantCache, AFFINE_UV_BIT};
 use engine::texture::{GpuTexture, TextureFilter};
-use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
+use engine::ui::{render_params_editor, EguiState};
 
 /// F4 docked editor: engine `EditorRuntime` hosted around this game.
 mod docked;
+/// HUD + pause menu, both loaded from `assets/ui/*.ron` (UI Designer documents).
+mod game_ui;
 
 fn default_demo_profiles() -> Vec<ShaderProfile> {
     let make = |name: &str, render: RenderParams| ShaderProfile {
@@ -1078,6 +1080,10 @@ struct Sandbox {
     /// In-game HUD state (title/bars/toasts) — drawn in Play mode only,
     /// mutated by scripts/native `Behavior`s through `ScriptApi`.
     hud: HudState,
+    /// The HUD and pause-menu RON documents plus the bindings they read.
+    game_ui: game_ui::GameUi,
+    /// Seconds of the last frame, for the HUD's fps readout.
+    last_dt: f32,
     /// The currently-playing full-screen color flash/tint, if any — ticked
     /// every frame and composited into the frame in `render()`. Triggered by
     /// scripts/native `Behavior`s via `ScriptApi::screen_flash` or by a
@@ -1204,6 +1210,7 @@ impl Sandbox {
         let rigs_dir = asset_root.join("rigs");
         let classes_dir = asset_root.join("classes");
         let saves_dir = asset_root.join("saves");
+        let game_ui = game_ui::GameUi::new(&asset_root);
         Self {
             asset_root,
             profiles_dir,
@@ -1269,6 +1276,8 @@ impl Sandbox {
             class_new_name: String::from("class_1"),
             particle_emitter_new_name: String::from("Sparkles"),
             hud: HudState::default(),
+            game_ui,
+            last_dt: 0.0,
             screen_effects: ScreenEffectState::default(),
             despawned_since_load: Vec::new(),
             current_music_path: None,
@@ -3090,6 +3099,34 @@ impl Sandbox {
         log::info!("exited play mode, restored edit-time state");
     }
 
+    /// Hot-reloads `assets/ui/*.ron` if they changed and publishes this
+    /// frame's game state as the bindings those documents read.
+    fn publish_game_ui(&mut self, docked: bool) {
+        let net_active = !matches!(self.net_mode, NetMode::Offline);
+        let net_status = self.net_status_text();
+        self.game_ui.update(&game_ui::UiSnapshot {
+            hud: &self.hud,
+            level_name: &self.current_level_name,
+            dt: self.last_dt,
+            net_active,
+            net_status: &net_status,
+            editor_available: editor_available(),
+            paused: self.paused,
+            docked,
+        });
+    }
+
+    /// Runs what a pause-menu button/toggle (an event name in the RON) asked for.
+    fn apply_ui_action(&mut self, ctx: &mut Context, action: game_ui::UiAction) {
+        match action {
+            game_ui::UiAction::Resume => self.resume(ctx),
+            game_ui::UiAction::ExitToEditor => self.exit_play_mode(ctx),
+            game_ui::UiAction::RestartLevel => self.restart_level(ctx),
+            game_ui::UiAction::Quit => ctx.should_quit = true,
+            game_ui::UiAction::SetShowStats(on) => self.game_ui.show_stats = on,
+        }
+    }
+
     /// Freezes gameplay simulation (see the `paused` check in `Game::update`)
     /// and releases the mouse so the pause menu's buttons are clickable —
     /// Play mode's relative-mouse-mode FPS look would otherwise swallow
@@ -3864,7 +3901,7 @@ impl Sandbox {
     }
 
     /// Pause menu's "Restart Level" (offered instead of "Exit to Editor"
-    /// when there's no editor to exit to — see `draw_pause_menu`) — reuses
+    /// when there's no editor to exit to — see `game_ui.rs`) — reuses
     /// the existing snapshot/restore pair to reset the current Play
     /// session. Briefly passes through `EditorMode::Edit` inside this one
     /// call, but that's never rendered: no frame happens between the two
@@ -6612,8 +6649,7 @@ impl Sandbox {
 
         ui.separator();
         ui.heading("HUD");
-        hud_style_editor(ui, &mut self.render_params.hud);
-        ui.small("Saved/loaded with the shader profile, like Render Params above.");
+        ui.small("The HUD and pause menu are RON documents: edit assets/ui/hud.ron and pause_menu.ron in the UI Designer tab.");
 
         ui.separator();
         ui.heading("Physics");
@@ -7090,6 +7126,18 @@ impl Game for Sandbox {
             };
         }
 
+        // Dev/test toggles: start straight in Play (`DUST_PLAY=1`) or in the
+        // pause menu (`DUST_PAUSED=1`), so the HUD and pause-menu documents
+        // can be checked without keyboard input.
+        let want_paused = std::env::var_os("DUST_PAUSED").is_some();
+        let want_play = want_paused || std::env::var_os("DUST_PLAY").is_some();
+        if want_play && self.mode == EditorMode::Edit && !self.docked_open {
+            self.enter_play_mode(ctx);
+            if want_paused {
+                self.pause(ctx);
+            }
+        }
+
         Ok(())
     }
 
@@ -7167,6 +7215,7 @@ impl Game for Sandbox {
 
     fn update(&mut self, ctx: &mut Context, dt: f32) -> anyhow::Result<()> {
         self.elapsed_time = ctx.time.elapsed;
+        self.last_dt = dt;
 
         // Drained before touching anything else in `self` — borrowing
         // `self.hot_reload` only for the duration of `poll_events` (which
@@ -7477,30 +7526,20 @@ impl Game for Sandbox {
         // full window resolution so the UI itself stays crisp.
         let mut ui_state = self.ui.take().expect("ui set up in init");
         let playing = self.mode == EditorMode::Play;
-        let mut pause_menu_action: Option<PauseMenuAction> = None;
+        let mut ui_actions: Vec<game_ui::UiAction> = Vec::new();
         let mut multiplayer_action: Option<engine::ui::MultiplayerAction> = None;
         let mut appearance_action: Option<engine::ui::AppearanceAction> = None;
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if playing {
-                egui::Area::new("play_mode_indicator".into())
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
-                    .show(egui_ctx, |ui| {
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            let escape_hint = if self.paused { "Esc to resume" } else { "Esc to pause" };
-                            let f3_hint = if editor_available() { " \u{b7} F3 stop" } else { "" };
-                            ui.label(format!(
-                                "Play Mode \u{2014} {escape_hint}{f3_hint} \u{b7} WASD + mouse \u{b7} Space jump \u{b7} E interact \u{b7} F9 checkpoint \u{b7} F10 load checkpoint"
-                            ));
-                        });
-                    });
                 // HUD only makes sense with a player around to show progress
-                // for — mirrors the play_mode_indicator's own gating. Left
-                // visible (though frozen, see `Game::update`) while paused,
-                // same as the rest of the frozen world behind the menu.
-                draw_hud(egui_ctx, &self.hud, &self.render_params.hud);
+                // for. Left visible (though frozen, see `Game::update`) while
+                // paused, same as the rest of the frozen world behind the menu.
+                let screen = egui_ctx.screen_rect();
+                self.publish_game_ui(false);
+                self.game_ui.draw_hud(egui_ctx, screen);
                 self.draw_dialogue_choices(egui_ctx);
                 if self.paused {
-                    pause_menu_action = draw_pause_menu(egui_ctx, editor_available());
+                    ui_actions = self.game_ui.draw_pause(egui_ctx, screen);
                     (multiplayer_action, appearance_action) = self.draw_pause_side_panels(egui_ctx);
                 }
             }
@@ -7508,12 +7547,8 @@ impl Game for Sandbox {
         ui_state.paint(drawable_size, full_output);
         self.ui = Some(ui_state);
 
-        match pause_menu_action {
-            Some(PauseMenuAction::Resume) => self.resume(ctx),
-            Some(PauseMenuAction::ExitToEditor) => self.exit_play_mode(ctx),
-            Some(PauseMenuAction::RestartLevel) => self.restart_level(ctx),
-            Some(PauseMenuAction::QuitGame) => ctx.should_quit = true,
-            None => {}
+        for action in ui_actions {
+            self.apply_ui_action(ctx, action);
         }
 
         match multiplayer_action {

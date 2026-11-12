@@ -7,7 +7,7 @@
 //   hud.title / hud.has_title                  optional heading
 //   hud.bar.health (0..1), hud.bar.health_pct, hud.bar.health.visible, hud.bar.health.class
 //   hud.toast.{0,1,2}.{text,alpha,visible}     fading messages, newest last
-//   play.hint                                   "Esc to pause · F3 stop · …"
+//   play.show_hint (bool), play.esc_hint, play.f3_hint   words for the controls chip
 //   level.name, perf.fps, perf.ms, hud.show_stats   (toggled from the pause menu)
 //   net.active (bool), net.status
 (
@@ -109,13 +109,14 @@
                 width: Fit,
                 height: Fit,
                 padding: (left: 10.0, top: 5.0, right: 10.0, bottom: 5.0),
+                bindings: {"visible": "play.show_hint"},
                 children: [
                     (
                         name: "Hint",
                         kind: Label(text: ""),
                         width: Fit,
                         height: Fit,
-                        bindings: {"text": "{play.hint}"},
+                        bindings: {"text": "Play Mode — {play.esc_hint}{play.f3_hint} · WASD + mouse · Space jump · E interact · F9 checkpoint · F10 load checkpoint"},
                     ),
                 ],
             ),
