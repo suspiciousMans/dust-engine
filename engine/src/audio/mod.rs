@@ -19,6 +19,7 @@ mod backend;
 pub mod ecs;
 mod engine;
 pub mod mixer;
+mod mixer_panel;
 pub mod spatial;
 #[cfg(not(target_os = "emscripten"))]
 mod native;
@@ -28,6 +29,7 @@ mod voices;
 mod web;
 
 pub use ecs::{audio_spatial_system, AudioEmitter, AudioListener, AUDIO_SPATIAL_SYSTEM};
+pub use mixer_panel::{apply_mixer_edit, draw_mixer_panel, MixerEdit, MixerPanelState};
 pub use backend::{AudioBackend, LoopBuffer, NullBackend, NullEvent};
 pub use engine::{AudioEngine, TrackHandle, LAYER_TRACK, MUSIC_TRACK};
 pub use mixer::{Bus, BusSettings, Mixer, MixerError, MixerSettings, MixerSettingsError, MASTER_BUS, MUSIC_BUS, SFX_BUS, UI_BUS};
