@@ -48,7 +48,7 @@ pub struct AudioEmitter {
     pub looped: bool,
     /// Distance model and the rest of the emitter parameters.
     pub emitter: Emitter,
-    /// Mixer bus to route the voice through (`None`: the default bus).
+    /// Mixer bus to route the voice through (`None`: `sfx`, where spatial voices start).
     pub bus: Option<String>,
     /// Set false to silence a looping emitter; set true to start it. A
     /// one-shot sets it false itself when it finishes.

@@ -601,7 +601,8 @@ Per voice the engine computes distance/cone gain (folded into the track
 volume, so buses and solo apply), an equal-power pan (`left² + right² = 1`)
 and a doppler pitch. At most `max_spatial_voices` play at once; a new voice
 over the bound steals the one with the lowest *effective* gain (ties: the
-oldest), and the thief's handle is dead if it would itself be the quietest.
+oldest); a new voice quieter than everything already playing is not started (its handle is dead).
+Spatial voices default to the `sfx` bus unless `assign_track_bus` says otherwise.
 One-shot `play_at` voices free their slot when they finish.
 
 Backend support (`AudioBackend` additive methods, all default-bodied):
