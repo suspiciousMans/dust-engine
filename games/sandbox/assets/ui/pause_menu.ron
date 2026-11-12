@@ -1,4 +1,6 @@
-// Sandbox pause menu. Edit in the UI Designer tab and Save; the running game
+// Sandbox pause menu (no dim layer: the multiplayer/appearance side panels are
+// egui windows underneath the designer layer and would be dimmed with it).
+// Edit in the UI Designer tab and Save; the running game
 // hot-reloads it.
 //
 // Events the game handles (Button on_click / Toggle on_toggle):
@@ -12,7 +14,6 @@
     respect_safe_area: true,
     styles: (
         classes: {
-            "overlay": (base: (bg_color: Some((0.0, 0.0, 0.0, 0.55)))),
             "window": (
                 base: (
                     bg_color: Some((0.11, 0.12, 0.15, 0.97)),
@@ -43,7 +44,6 @@
         name: "Root",
         kind: Panel,
         children: [
-            (name: "Dim", kind: Panel, classes: ["overlay"]),
             (
                 name: "Window",
                 kind: Panel,

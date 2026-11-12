@@ -838,7 +838,9 @@ impl TabViewer for ShellViewer<'_> {
                 ui.label(format!("Entities: {}", p.entities));
                 ui.label(format!("Draw calls: {}", p.draw_calls));
             }
-            EditorTab::Settings => settings_ui(ui, self.prefs, &mut self.preset_request),
+            EditorTab::Settings => {
+                settings_ui(ui, self.prefs, &mut self.preset_request);
+            }
             other => {
                 if !self.host.tab_ui(other, self.world, ui) {
                     ui.weak(format!("{} is not connected in this build", other.title()));
@@ -971,7 +973,8 @@ fn colour_row(ui: &mut egui::Ui, label: &str, c: &mut [f32; 3]) {
     });
 }
 
-fn settings_ui(ui: &mut egui::Ui, prefs: &mut EditorPrefs, preset_request: &mut Option<LayoutPreset>) {
+/// Returns the "Reset all settings" button's response (tests click it).
+fn settings_ui(ui: &mut egui::Ui, prefs: &mut EditorPrefs, preset_request: &mut Option<LayoutPreset>) -> egui::Response {
     ui.heading("Keymap");
     egui::ComboBox::from_id_salt("keymap_preset").selected_text(prefs.keymap.label()).show_ui(ui, |ui| {
         for k in KeymapPreset::ALL {
@@ -993,6 +996,14 @@ fn settings_ui(ui: &mut egui::Ui, prefs: &mut EditorPrefs, preset_request: &mut 
     colour_row(ui, "Text", &mut t.foreground);
     colour_row(ui, "Muted text", &mut t.muted_foreground);
     colour_row(ui, "Border", &mut t.border);
+    ui.horizontal(|ui| {
+        ui.label("Font");
+        egui::ComboBox::from_id_salt("theme_font").selected_text(font_label(&t.font)).show_ui(ui, |ui| {
+            for (value, label) in FONT_CHOICES {
+                ui.selectable_value(&mut t.font, value.to_string(), label);
+            }
+        });
+    });
     if ui.button("Reset theme").clicked() {
         *t = EditorTheme::builtin_default();
     }
@@ -1005,6 +1016,22 @@ fn settings_ui(ui: &mut egui::Ui, prefs: &mut EditorPrefs, preset_request: &mut 
             }
         }
     });
+    ui.add_space(6.0);
+    ui.separator();
+    let reset = ui.button("Reset all settings to defaults").on_hover_text("Theme, font, UI scale, keymap, grid and the default layout");
+    if reset.clicked() {
+        prefs.reset_to_defaults();
+        *preset_request = Some(prefs.layout_preset);
+    }
+    reset
+}
+
+/// `(EditorTheme::font value, label)`. egui ships two families; loading other
+/// font files is not supported yet.
+const FONT_CHOICES: [(&str, &str); 2] = [("", "Default (proportional)"), ("monospace", "Monospace")];
+
+fn font_label(value: &str) -> &'static str {
+    FONT_CHOICES.iter().find(|(v, _)| v.eq_ignore_ascii_case(value)).map_or(FONT_CHOICES[0].1, |(_, l)| l)
 }
 
 #[cfg(test)]
@@ -1032,6 +1059,50 @@ mod tests {
         // Bad input leaves the layout untouched.
         assert!(b.restore_layout_ron("nonsense").is_err());
         assert_eq!(b.layout_ron().unwrap(), text);
+    }
+
+    /// Frame with the Settings content in a CentralPanel; returns the reset button's rect.
+    fn settings_frame(ctx: &egui::Context, events: Vec<egui::Event>, prefs: &mut EditorPrefs, req: &mut Option<LayoutPreset>) -> egui::Rect {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 1400.0))),
+            events,
+            ..Default::default()
+        };
+        let mut rect = egui::Rect::NOTHING;
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| rect = settings_ui(ui, prefs, req).rect);
+        });
+        rect
+    }
+
+    #[test]
+    fn settings_reset_button_restores_defaults_and_requests_default_layout() {
+        let ctx = egui::Context::default();
+        let mut prefs = EditorPrefs::default();
+        prefs.keymap = KeymapPreset::Blender;
+        prefs.ui_scale = 2.0;
+        prefs.theme.accent = [1.0, 0.0, 0.0];
+        prefs.theme.font = "monospace".into();
+        prefs.layout_preset = LayoutPreset::Tall;
+        let mut req = None;
+        let rect = settings_frame(&ctx, vec![], &mut prefs, &mut req);
+        assert!(rect.width() > 10.0, "button laid out: {rect:?}");
+        assert_eq!(prefs.ui_scale, 2.0, "drawing alone changes nothing");
+
+        let pos = rect.center();
+        let btn = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        for evs in [vec![egui::Event::PointerMoved(pos)], vec![egui::Event::PointerMoved(pos)], vec![btn(true)], vec![btn(false)]] {
+            settings_frame(&ctx, evs, &mut prefs, &mut req);
+        }
+        assert_eq!(prefs, EditorPrefs::default());
+        assert_eq!(req, Some(LayoutPreset::Default));
+    }
+
+    #[test]
+    fn font_labels() {
+        assert_eq!(font_label(""), "Default (proportional)");
+        assert_eq!(font_label("Monospace"), "Monospace");
+        assert_eq!(font_label("unknown.ttf"), "Default (proportional)");
     }
 
     #[test]

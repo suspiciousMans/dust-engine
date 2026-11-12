@@ -83,10 +83,13 @@ impl EditorTheme {
 
         let size = self.font_size.clamp(8.0, 32.0);
         ctx.style_mut(|s| {
-            use egui::{FontId, TextStyle};
+            use egui::{FontFamily, FontId, TextStyle};
+            // `font` is "" (egui's proportional font) or "monospace".
+            let body_family = if self.font.eq_ignore_ascii_case("monospace") { FontFamily::Monospace } else { FontFamily::Proportional };
             let set = |s: &mut egui::Style, ts: TextStyle, k: f32| {
                 if let Some(f) = s.text_styles.get_mut(&ts) {
-                    *f = FontId::new(size * k, f.family.clone());
+                    let family = if ts == TextStyle::Monospace { FontFamily::Monospace } else { body_family.clone() };
+                    *f = FontId::new(size * k, family);
                 }
             };
             set(s, TextStyle::Body, 1.0);
@@ -160,6 +163,23 @@ mod tests {
         assert_eq!(ctx.style().visuals.panel_fill, t.panel_color());
         assert_eq!(ctx.style().visuals.selection.stroke.color, t.accent_color());
         assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].size, 20.0);
+    }
+
+    #[test]
+    fn font_choice_switches_the_chrome_family_and_back() {
+        let ctx = egui::Context::default();
+        let mut t = EditorTheme::builtin_default();
+        t.apply_to_egui(&ctx);
+        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].family, egui::FontFamily::Proportional);
+        t.font = "monospace".into();
+        t.apply_to_egui(&ctx);
+        for ts in [egui::TextStyle::Body, egui::TextStyle::Button, egui::TextStyle::Heading, egui::TextStyle::Small] {
+            assert_eq!(ctx.style().text_styles[&ts].family, egui::FontFamily::Monospace, "{ts:?}");
+        }
+        t.font = String::new();
+        t.apply_to_egui(&ctx);
+        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].family, egui::FontFamily::Proportional);
+        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Monospace].family, egui::FontFamily::Monospace);
     }
 
     #[test]
