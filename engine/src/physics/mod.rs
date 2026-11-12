@@ -111,3 +111,56 @@ impl Collider {
 pub fn step(world: &mut hecs::World, dt: f32, params: &PhysicsParams) -> Vec<(hecs::Entity, hecs::Entity)> {
     sim::run_step(world, dt, params, 1, DEFAULT_JOINT_ITERATIONS, None).trigger_overlaps
 }
+
+/// Compiles and runs the examples shown in GUIDE.md's Physics section, so the
+/// guide cannot drift away from the real signatures.
+#[cfg(test)]
+mod guide_examples {
+    use super::*;
+    use crate::ecs::Transform;
+    use glam::{Quat, Vec3};
+
+    #[test]
+    fn guide_physics_section() {
+        let mut world = hecs::World::new();
+        let floor = world.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)), Collider::aabb(Vec3::new(20.0, 0.5, 20.0))));
+        let ball = world.spawn((
+            Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
+            Collider::sphere(0.5),
+            RigidBody::default(),
+            PhysicsMaterial { friction: 0.4, restitution: 0.3 },
+        ));
+        let sensor = world.spawn((Transform::from_position(Vec3::new(0.0, 0.5, 0.0)), Collider::trigger(ColliderShape::Aabb { half_extents: Vec3::splat(1.0) })));
+        let anchor = Vec3::new(5.0, 6.0, 0.0);
+        let bob = world.spawn((Transform::from_position(anchor + Vec3::X * 2.0), Collider::sphere(0.25), RigidBody::default()));
+        world.spawn((Joint::distance_to_point(bob, anchor, 2.0),));
+
+        // Queries
+        let down = world.raycast(Vec3::new(0.0, 10.0, 0.0), Vec3::NEG_Y, 100.0, u32::MAX).expect("hit");
+        assert_eq!(down.entity, ball);
+        let filter = QueryFilter::default().excluding(ball);
+        let hits = world.raycast_all(Vec3::new(0.0, 10.0, 0.0), Vec3::NEG_Y, 100.0, &filter.with_triggers());
+        assert_eq!(hits.iter().map(|h| h.entity).collect::<Vec<_>>(), vec![sensor, floor]);
+        let _ = world.box_sweep(Vec3::Y * 5.0, Vec3::splat(0.5), Quat::IDENTITY, Vec3::NEG_Y, 10.0, u32::MAX);
+        let _ = world.overlap_sphere(Vec3::ZERO, 2.0, u32::MAX);
+
+        // Stateful simulation + trigger events as a resource
+        let mut pw = PhysicsWorld::new(PhysicsParams::default());
+        let mut entered = false;
+        for _ in 0..120 {
+            for ev in pw.update(&mut world, 1.0 / 60.0) {
+                entered |= ev.kind == TriggerEventKind::Enter && ev.entity == ball && ev.other == sensor;
+            }
+        }
+        assert!(entered);
+        assert!(world.get::<&Transform>(ball).unwrap().position.y > 0.0);
+        let p = world.get::<&Transform>(bob).unwrap().position;
+        assert!(((p - anchor).length() - 2.0).abs() < 0.05);
+
+        // Character controller
+        let player = world.spawn((Transform::from_position(Vec3::new(10.0, 2.0, 10.0)),));
+        let mut cc = CharacterController::default();
+        let r = cc.move_and_slide(&mut world, player, Vec3::new(0.0, -5.0, 0.0)).unwrap();
+        assert!(r.grounded);
+    }
+}

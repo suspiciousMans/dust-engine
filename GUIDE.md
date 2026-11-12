@@ -417,40 +417,99 @@ and a separate `(&Transform, &LevelObjectMeta, &Light)` query for the
 
 ## Physics
 
-`engine::physics` is a small (~150 line), deliberately simple/readable
-simulation — the goal is an *easily editable* physics engine, not a
-feature-complete one:
+`engine::physics` is a small, readable simulation, not a general solver: translation-only bodies, four collider shapes, sweep/ray/overlap queries, simple joints, a character controller. The "Physics audit" table in `docs/KNOWN-ISSUES.md` lists what exists, what is tested and what is missing (no convex meshes, no angular dynamics, no CCD for bodies, no kinematic body type, no sleeping islands). The examples below are compiled and run by `physics::guide_examples` in `engine/src/physics/mod.rs`.
+
+### Bodies and colliders
 
 ```rust
-pub struct PhysicsParams { pub gravity: f32, pub linear_damping: f32 }
+pub struct PhysicsParams { pub gravity: f32, pub linear_damping: f32 }   // default 9.8, 0.15
 pub struct RigidBody { pub velocity: Vec3, pub grounded: bool }
-pub enum ColliderShape { Sphere { radius: f32 }, Aabb { half_extents: Vec3 } }
+pub enum ColliderShape {
+    Sphere { radius: f32 },
+    Aabb { half_extents: Vec3 },                      // axis-aligned, rotation ignored
+    Capsule { radius: f32, half_height: f32 },        // local +Y
+    Box { half_extents: Vec3 },                       // oriented by Transform::rotation
+}
 pub struct Collider { pub shape: ColliderShape, pub is_trigger: bool }
-pub fn step(world: &mut hecs::World, dt: f32, params: &PhysicsParams) -> Vec<(Entity, Entity)>;
+// Collider::new / ::trigger(shape) / ::sphere(r) / ::capsule(r, hh) / ::aabb(he) / ::oriented_box(he)
 ```
 
-An entity with a `Collider` but **no `RigidBody` is static** — collided
-against, but never moved or integrated. That's a deliberate choice: whether
-an object is dynamic is just "does it have a `RigidBody`," one thing to keep
-in sync, not a separate flag that could disagree with it. `step` (called
-once per frame from `Sandbox::update`, only in Play mode) integrates gravity
-+ damping + position for every dynamic body, then resolves overlaps by
-pushing dynamic bodies out along the axis of least penetration (simple
-AABB-AABB / AABB-Sphere / Sphere-Sphere tests).
+A `Collider` with no `RigidBody` is **static**; with one it is dynamic. Optional components: `CollisionLayers { layer, mask }` (two entities collide only if each one's mask contains the other's layer; default layer 0, mask all) and `PhysicsMaterial { friction, restitution }` (pair values combine as `sqrt(a*b)` and `max`; an entity without one counts as frictionless).
 
-Known simplifications, worth knowing before you lean on this for something
-demanding: axis-aligned boxes only (no rotation/torque on colliders), and one
-resolution pass per frame (an object resting against two overlapping
-surfaces can jitter slightly rather than settle perfectly). Fine for a level
-built from boxes/planes and a player sphere; not a general-purpose solver —
-swap in `rapier3d` or similar if you outgrow it.
+```rust
+let mut world = hecs::World::new();
+let floor = world.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)),
+                         Collider::aabb(Vec3::new(20.0, 0.5, 20.0))));
+let ball = world.spawn((Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
+                        Collider::sphere(0.5), RigidBody::default(),
+                        PhysicsMaterial { friction: 0.4, restitution: 0.3 }));
+let sensor = world.spawn((Transform::from_position(Vec3::new(0.0, 0.5, 0.0)),
+                          Collider::trigger(ColliderShape::Aabb { half_extents: Vec3::splat(1.0) })));
+```
 
-`spawn_level_object` in `games/sandbox/src/main.rs` derives each object's
-`Collider` from its `Transform::scale` (an approximate box, not an exact
-mesh-fitted bound — fine for boxy low-poly levels). `PhysicsParams` lives on
-the currently-loaded `Level` (`Level::physics`), so gravity/damping save,
-load, and revert together with everything else — edit them live under
-**Physics** in the F1 panel.
+### Stepping
+
+Three ways, from simplest to richest:
+
+* `physics::step(&mut world, dt, &params) -> Vec<(Entity, Entity)>`: stateless, one pass per call, returns the (dynamic, other) trigger overlaps. No sleeping.
+* `PhysicsWorld::new(params)` then `pw.update(&mut world, frame_dt) -> Vec<PhysicsEvent>`: fixed 1/60 s timestep with an accumulator (at most `max_substeps` = 8 per call), sleeping (`SleepConfig`), joints, and native Enter/Stay/Exit events. `pw.step_fixed(&mut world)` runs exactly one step; `pw.is_sleeping(e)`, `pw.interpolated_position(&world, e)` and `pw.alpha()` help rendering.
+* Schedule/Resources: `schedule.add_system("physics", physics::physics_system)` (stage it as you like). It reads the `PhysicsParams` resource, uses a `PhysicsWorld` resource if you inserted one (otherwise the stateless `step`), and fills a `TriggerEvents` resource every run. `Headless::with_default_systems` already does this.
+
+```rust
+let mut pw = PhysicsWorld::new(PhysicsParams::default());
+for ev in pw.update(&mut world, 1.0 / 60.0) {
+    if ev.kind == TriggerEventKind::Enter { /* ev.entity (dynamic) entered ev.other */ }
+}
+// or, from any system after physics_system ran:
+// for ev in ctx.res::<TriggerEvents>().entered() { ... }   // also .stayed(), .exited(), .involving(e)
+```
+
+Events are replaced every run, ordered by `(entity, other)` with all Enter/Stay before all Exit.
+
+### Queries
+
+`PhysicsQueries` is implemented for `hecs::World`; import it with `use engine::physics::PhysicsQueries`. Every query honours layers (`layer_mask: u32`, `u32::MAX` = everything); triggers are skipped unless you use a `QueryFilter` with `.with_triggers()`.
+
+```rust
+let hit: Option<Hit> = world.raycast(origin, Vec3::NEG_Y, 100.0, u32::MAX);   // nearest
+let all: Vec<Hit> = world.raycast_all(origin, Vec3::NEG_Y, 100.0,
+        &QueryFilter::default().excluding(ball).with_triggers());               // nearest first
+let sweep = world.box_sweep(center, Vec3::splat(0.5), Quat::IDENTITY, Vec3::NEG_Y, 10.0, u32::MAX);
+// also: raycast_filtered, shape_cast, spherecast, capsule_sweep
+let near: Vec<Entity> = world.overlap_sphere(center, 2.0, u32::MAX);           // also overlap_box, overlap_capsule, overlap_shape
+```
+
+`Hit { entity, point, normal, distance, started_inside }`: for rays `distance` is along the unit direction; for shape casts it is how far the shape's centre travelled before touching. `normal` faces back toward the query. Ties break on the lowest entity id, so results are deterministic.
+
+### Joints
+
+A `Joint` is a component on its own entity. Constructors: `distance`, `rope`, `pin`, `spring` (and `*_to_point` variants that attach to a fixed world point), plus `.with_anchors(local_a, local_b)` and `.with_collide_connected(bool)`. Joints are solved inside `PhysicsWorld` steps and inside the stateless `step`. Jointed bodies do not sleep, and jointed pairs do not collide unless asked to.
+
+```rust
+let anchor = Vec3::new(5.0, 6.0, 0.0);
+let bob = world.spawn((Transform::from_position(anchor + Vec3::X * 2.0),
+                       Collider::sphere(0.25), RigidBody::default()));
+world.spawn((Joint::distance_to_point(bob, anchor, 2.0),));      // pendulum
+// Joint::spring(a, b, rest_length, stiffness, damping), Joint::rope(a, b, max_length), Joint::pin(a, b)
+```
+
+Bodies have no angular state, so a joint constrains positions only (a pin is a point constraint, not a hinge).
+
+### Character controller
+
+```rust
+let mut cc = CharacterController::default();   // radius .35, half_height .5, step .35, slope 45 deg
+let r: MoveResult = cc.move_and_slide(&mut world, player, Vec3::new(0.0, -5.0, 0.0)).unwrap();
+// r.position, r.grounded, r.ground_normal, r.blocked, r.stepped, r.last_hit
+```
+
+Call it once per fixed step with the displacement you want (velocity * dt, gravity included). It moves the entity's `Transform` directly and the entity should not have a `RigidBody`. It slides along walls, steps up ledges, refuses slopes steeper than `max_slope_deg`, and stops at ceilings. It does not push dynamic bodies.
+
+### Debug drawing
+
+`PhysicsDebug::build(&world, &PhysicsDebugOptions::default(), |e| pw.is_sleeping(e))` returns wireframe `lines` (colour by static / dynamic / sleeping / trigger) for any line renderer.
+
+`spawn_level_object` in `games/sandbox/src/main.rs` derives each object's `Collider` from its `Transform::scale`. `PhysicsParams` lives on the loaded `Level` (`Level::physics`), so gravity and damping save, load and revert with the level.
 
 ## Audio
 

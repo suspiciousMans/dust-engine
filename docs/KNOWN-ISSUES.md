@@ -13,10 +13,35 @@ Updated 2026-11-11 after merging the legacy-editor retirement in all three games
 | Games must call `audio.update()` each frame for track fades to advance | Stage 1 / P2 | web audio path type-checked only, never built |
 | `physics::sim::tests::five_hundred_body_benchmark` asserts <50 ms/step in debug and fails under heavy machine load | Stage 0 | flaky, not a logic bug |
 | Skeletal animation (`engine::skeletal`): CPU skinning + glTF import are unit-tested only; `SkinnedMesh` GL upload and drawing have never run on a real GL context, no game/editor draws it yet, no GPU-skinning path, no inspector registration, glTF imports the first skin only | Stage 5 | `engine/src/skeletal/` |
-| Physics ray/sweep queries and joints: check coverage after the physics rewrite | Stage 5 | |
+| Physics: see the **Physics audit** table below (what exists/tested/missing: no convex mesh, no angular dynamics, no body CCD, no kinematic flag, no islands) | Stage 5 | `engine/src/physics/` |
 | `new_game.sh` / `package.sh` (bash) exist alongside the PowerShell scripts; `new_game.sh` was checked by scaffolding a copy and `cargo check`ing it, `package.sh` only by `bash -n` and a dry run. No web (emscripten) packaging: no build recipe is documented in the repo | Stage 5 | `new_game.sh`, `package.sh` |
 | CI has Windows and Linux jobs (`.github/workflows/ci.yml`; the Linux job was validated as YAML only, never run on GitHub); web is not gated | Stage 0 | |
 | `cargo clippy --workspace` reports ~100 style warnings (not gated) | Stage 0 | mostly `map_or`, complex types |
+
+## Physics audit
+
+Status per feature in `engine/src/physics/`. "tested" = a unit test in the module exercises it and passes (`cargo test -p engine --lib physics`: 72 tests).
+
+| Feature | Status | Notes |
+|---|---|---|
+| Shape: AABB | exists + tested | `ColliderShape::Aabb`, always axis-aligned (rotation ignored); `narrow.rs` tests |
+| Shape: sphere | exists + tested | |
+| Shape: capsule | exists + tested | local +Y axis, rotates with `Transform::rotation` |
+| Shape: oriented box | exists + tested | `ColliderShape::Box`; SAT incl. edge-edge, `narrow.rs` tests |
+| Shape: convex mesh | **missing** | no hull/mesh collider type; only the four primitives |
+| Raycast (`raycast`, `raycast_filtered`, `raycast_all`) | exists + tested | all four shapes, layers, triggers, exclusion, started-inside, deterministic ties |
+| Sweeps (`shape_cast`, `spherecast`, `capsule_sweep`, `box_sweep`) | exists + tested | thin-wall no-tunnel test on a long cast |
+| Overlap (`overlap_shape/sphere/box/capsule`) | exists + tested | |
+| Layers / masks (`CollisionLayers`, `LayerNames` RON) | exists + tested | mutual rule; queries filter by layer mask |
+| Trigger events (`PhysicsEvent`, `TriggerEvents` resource, `physics_system`) | exists + tested | Enter/Stay/Exit, stable order; Headless wired. Events are body-vs-collider only, no contact (non-trigger) events |
+| Joints (distance, rope, pin, spring; `Joint` component) | exists + tested | pendulum length over 600 steps and period, spring vs analytic frequency + reduced mass, 5-link chain, rope slack/taut, pin, determinism (bit-identical in both modes). Iterative position-based, unit-mass bodies; no hinge/angle limits/motors; jointed bodies never sleep |
+| Angular velocity / rotation dynamics | **missing** | `RigidBody` is `{ velocity, grounded }`; rotation is set by the game and only affects collision shape. No torque, no spin from contacts |
+| Friction / restitution (`PhysicsMaterial`) | exists + tested | one combined test (bounce + slow-down); sqrt/max combine; no rolling friction (no angular dynamics) |
+| Sleeping | exists + tested (per body) | `SleepConfig`; `stack_settles_and_sleeps`. **Islands: not done** — each body sleeps on its own timer and wakes when moved/touched by an awake body |
+| CCD for dynamic bodies | **missing** | bodies integrate discretely, so fast small bodies can tunnel. Queries and the character controller do swept tests (`tiny_sphere_does_not_tunnel_thin_wall_on_long_cast`); fixed 1/60 s step with up to 8 substeps per frame |
+| Kinematic bodies | **missing** (as a body type) | no flag, no velocity transfer to touching bodies. A collider without `RigidBody` is static and can be moved by writing its `Transform`, but riders are not carried. See character controller for the kinematic capsule |
+| Character controller (`CharacterController::move_and_slide`) | exists + tested | slide, step offset, slope limit, ceiling, grounded; does not push dynamic bodies |
+| Broadphase | exists, benchmarked only | `five_hundred_body_benchmark`: ~7.9 ms/step on this branch vs ~8.3 ms/step on dust/main (debug build, 2 jobs, idle machine); no perf regression, no scaling test beyond 500 bodies |
 
 ## Editor
 
