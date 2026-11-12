@@ -1,6 +1,7 @@
 # Scripting with Oxidized (`.ox`)
 
-Status: **decided and implemented as a vertical slice** (plan: Stage 5 item 4).
+Status: **implemented and the only scripting system** (plan: Stage 5 item 4). The `.pss` interpreter, `ScriptBehavior`,
+`testkit::SmokeTestHost`, the `legacy-pss` feature and `tools/script_editor` were removed (owner decision 2026-11-11).
 Engine name stays "Jame" until Stage 6; paths below will move with the rename.
 
 ## 1. What Oxidized is today (measured, not assumed)
@@ -53,7 +54,7 @@ call `runtime::dispatch` directly. `rustc` must be installed wherever scripts ar
 ## 3. Architecture (as built)
 
 ```
-games/<g>/assets/scripts/foo.ox
+games/<g>/scripts/foo.ox         (asset root = the game dir; level files say `scripts/foo.ox`)
    │  oxc_scripts build  /  OxRuntime::reload   (engine/src/script/ox/build/)
    ▼
 entry.ox = import engine_api.ox + import foo.ox      engine_api.ox is GENERATED from spec.rs
@@ -62,7 +63,7 @@ entry.ox = import engine_api.ox + import foo.ox      engine_api.ox is GENERATED 
 foo.rs  → hooks made `pub` → foo.shim.rs = [OxVal ABI + __oxidized_natives + mod ox{include foo.rs} + extern "C" ox_on_*]
    │  rustc --crate-type cdylib  (panic=unwind, opt-level 1)
    ▼
-liboxs_foo.<gen>.so  ──libloading──►  OxBehavior : Behavior   (engine/src/script/ox/runtime.rs)
+liboxs_foo.<cache key>.so  ──libloading──►  OxBehavior : Behavior   (engine/src/script/ox/runtime.rs)
 ```
 
 * **One source of truth for the API:** `engine/src/script/ox/build/spec.rs::SPEC` (one line per native). From it we
@@ -105,6 +106,8 @@ through `OxServices`; the app calls `services.set_input(..)` before hooks and `s
 
 ## 4. Example & verification
 
+(Output below is from the original vertical slice, before `.pss` was removed; the legacy-interpreter test counts no longer apply.)
+
 `games/sandbox/assets/scripts/spin_bob.ox` — spin (tunable speed, Space = 3×) + bob (base_y captured in `on_ready`) +
 interact tone/sound + `on_trigger_enter` logs and spawns `pickup_spark`, `on_trigger_exit` despawns it.
 
@@ -130,20 +133,20 @@ Cost: `bench_spin_bob` (ignored test): ~36 µs per `on_update` (debug engine bui
 transpiler's `DynamicValue`/`String` allocation for string literals (`"base_y".to_string()` per call) — fine for tens of
 scripted entities, not for thousands. Only a release-engine measurement would be authoritative; not taken.
 
-## 5. Migration `.pss` → `.ox`
+## 5. Migration `.pss` → `.ox` (done; `.pss` is no longer loadable)
 
-* `oxc_scripts convert foo.pss [--out-dir D]` converts the **behavior** subset: hook renames
-  (`ready/update/interact/trigger_*` → `on_*` with typed params), `get_x/y/z()` → `pos(0/1/2)`, `set_position` → `set_pos`,
-  `play_sfx` → `play_sound`, `6.283185307` → `tau()`, top-level `let` → `get_var/set_var` (initial value becomes the default),
-  semicolons dropped. It prints warnings (untyped helper fns, string `+`, `screen_flash` which has no `.ox` API yet).
-  The converted `bob_demo.pss` builds and is checked in as `games/sandbox/assets/scripts/bob_demo.ox`.
-* Smoke-test **driver** scripts (`tick()` + `press/release/assert_true/finish`) are *not* behaviors: they run against
-  `testkit::SmokeTestHost`, which is not part of this slice. The converter refuses them (verified on `basic_playthrough.pss`).
-* **`legacy-pss` cargo feature, default ON.** Reason: 3 bundled smoke drivers (`sandbox`, `walkaround_demo`'s `basic_playthrough`,
-  `mushroom_man`'s `talk_to_sprite`) are still `.pss`, and the games' `main.rs` compile them with `engine::script::Interpreter`.
-  With the feature off, `script::{Interpreter,…}`, `behavior::ScriptBehavior`, `testkit` and `App::run_scripted` are compiled out
-  (`cargo check -p engine --no-default-features` is clean). Flip the default once an `.ox` smoke host exists
-  (natives `press/release/assert_true/finish` in a second spec).
+* All bundled scripts are `.ox`: `games/{sandbox,walkaround_demo,mushroom_man}/scripts/bob_demo.ox` (converted with
+  `oxc_scripts convert`, then hand-edited: amplitude/period became `tunable(...)`s with the same defaults, state is
+  `get_var/set_var`) and the six smoke drivers under `games/*/scripts/smoke/*.ox` (ported by hand, see §8).
+* `oxc_scripts convert foo.pss [--out-dir D]` stays as a one-way migration aid for scripts outside this repo: hook
+  renames (`ready/update/interact/trigger_*` → `on_*` with typed params), `get_x/y/z()` → `pos(0/1/2)`,
+  `set_position` → `set_pos`, `play_sfx` → `play_sound`, `6.283185307` → `tau()`, top-level `let` → `get_var/set_var`,
+  semicolons dropped. It prints warnings (untyped helper fns, string `+`, `screen_flash` which has no `.ox` API yet) and
+  refuses smoke-driver scripts (port those by hand). Its fixtures live in `tools/oxc_scripts/tests/fixtures/`.
+* Removed: `engine/src/script/{lexer,parser,interpreter}.rs`, `behavior::ScriptBehavior`, `testkit.rs`, the `legacy-pss`
+  cargo feature (engine now has no features), `tools/script_editor` (it only edited/syntax-checked `.pss` through the
+  removed interpreter; nothing was ported — use any text editor, errors show as `file:line:col` in the log/console).
+* A level/class entry pointing at a non-`.ox` script is logged as unsupported and spawns without behavior.
 
 ## 6. What Oxidized cannot do yet (and the minimal change)
 
@@ -170,9 +173,38 @@ Verified against `target/release/oxidized` (built 2026-10-16):
 
 ## 7. Not done / next
 
-* The game loops (`games/*/src/main.rs`) don't yet attach `OxBehavior` by `.ox` extension or call
-  `OxRuntime::poll()` / `OxServices::{set_input,drain_commands}`; that is app-side wiring in files owned by other changes.
-  Sketch: on level load `rt.behavior(stem)` → `BehaviorSlot(Box::new(b))`; per frame `rt.poll()` → print `report.result.unwrap_err().to_strings()` to the console.
-* Option (a) static ship build (see Decision).
+* Static ship build, option (a): games currently need `oxidized` + `rustc` on the machine that *builds* scripts (first run);
+  a player machine can run from a pre-filled `.ox-build` cache only if the `oxidized` binary is still discoverable (the cache key
+  hashes the compiler binaries). A build-time/`build.rs` path or a keyed-by-source cache that does not need the compiler is open.
+* The bundled games apply `set_rot`/`set_scale` but only log `spawn`/`despawn` commands as unsupported.
+* Natives for `screen_flash` are missing; `.ox` cannot trigger it.
 * `oxidized` discovery uses the CLI; if/when oxidized is vendored the same code could call `oxidized::pipeline::compile_file` in-process.
 * Windows/macOS lib naming is handled in `lib_file_name` but untested.
+* `[profile.release] panic = "abort"` applies to the engine only; script libraries are built by `rustc` with `panic=unwind`
+  so script panics stay contained, but the host trampoline's `catch_unwind` is a no-op in a release engine.
+
+## 8. Smoke-test driver (`tick`)
+
+Replaces `App::run_scripted` + `SmokeTestHost` (see GUIDE.md "Scripted smoke tests" for the user-facing description).
+
+* **Script shape:** `fn tick(frame: Int, t: Float)`; called once per frame by `App::run_scripted(.., SmokeDriver)`.
+* **Profile:** `build::spec::Profile::Smoke` (`SMOKE_SPEC` + `SMOKE_PRELUDE`) has its own native table, its own API hash
+  (a behavior library cannot load as a smoke library and vice versa) and one hook, `tick`. Natives: `log time press release
+  assert_eq assert_eq_str get_var set_var clamp`, plus ox-level wrappers `assert_true(cond: Bool, msg)` and `finish(ok: Bool)`.
+  Why wrappers: oxidized wraps a `Bool` argument in `DynamicValue::Bool(..)`, which a native declared with a `bool` parameter
+  rejects in rustc; an ox-defined `fn` taking `Bool` accepts it (checked), and forwards to `check_fail(msg)` / `finish_with(0|1)`.
+* **State:** ox has no globals, so phase counters use `get_var/set_var`, backed by a host-side map (`SmokeState`).
+* **Events:** `press/release` queue `sdl2::event::Event::KeyDown/KeyUp`; `run_scripted` drains them after `tick` into
+  `ctx.input.handle_event` + `game.handle_event`. Real window, exit code 0/1 as before.
+* **Loading without a hand-built cdylib:** `SmokeDriver::load(script)` runs the same `build_script` pipeline as hot reload
+  (`oxidized build` → shim → `rustc` cdylib) into `<script dir>/.ox-build`, then `libloading`s it. A content-hash cache
+  (`oxs_<name>.<key>.so`, key = profile API hash, opt level, source, sibling `.ox` files when the script imports, size+mtime of
+  `oxidized`/`rustc`) makes repeat runs skip the compilers; the library is written as `*.part` and renamed, so an interrupted
+  build is never trusted. `OX_NO_CACHE=1` disables it. A `build.rs` step was not needed.
+* **Measured (debug engine, this machine):** cold build of a smoke script 0.9–1.9 s (`built in 1.9s` first sandbox run,
+  `1.2–1.3 s` walkaround_demo / mushroom_man, `0.0s (cached)` afterwards); `check_docked_editor.sh` end to end 8.4 s including the
+  cold build and a ~6 s run. The build happens before the window opens, so it does not distort the game clock.
+* **Errors:** build errors print `file:line:col: message` and exit 1; a script panic in `tick` (including a failing
+  `assert(..)`) logs `smoke test script error: <name>::tick: <msg>` and exits 1; a `.pss` path is rejected.
+* **Tests:** `script::ox::tests::smoke_*` (headless: keys injected, phase state, assertion-wins-over-finish, missing `tick`, panic,
+  `.pss` rejection) and `behavior_build_cache_skips_the_compilers`.

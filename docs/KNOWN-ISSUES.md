@@ -1,7 +1,7 @@
 # Known issues
 
 Each item names the plan stage that owns it (see `docs/ROADMAP.md`).
-Updated 2026-11-11 after merging the legacy-editor retirement in all three games, scene/prefab I/O, input maps, skeletal animation and docs/packaging.
+Updated 2026-11-12 (scripting moved to Oxidized: `.pss`, `legacy-pss` and `tools/script_editor` removed). Earlier 2026-11-11 update: legacy-editor retirement in all three games, scene/prefab I/O, input maps, skeletal animation and docs/packaging.
 
 ## Engine
 
@@ -18,6 +18,10 @@ Updated 2026-11-11 after merging the legacy-editor retirement in all three games
 | No distance-based voice culling beyond the `max_spatial_voices` bound (default 32); doppler uses `Sink::set_speed` (changes speed and pitch together); no occlusion, reverb or HRTF | Stage 1 | |
 | `physics::sim::tests::five_hundred_body_benchmark` asserts <50 ms/step in debug and fails under heavy machine load | Stage 0 | flaky, not a logic bug |
 | Skeletal animation (`engine::skeletal`): CPU skinning + glTF import are unit-tested only; `SkinnedMesh` GL upload and drawing have never run on a real GL context, no game/editor draws it yet, no GPU-skinning path, no inspector registration, glTF imports the first skin only | Stage 5 | `engine/src/skeletal/` |
+| Scripting is Oxidized-only (`docs/SCRIPTING-OXIDIZED.md`). Scripts and smoke tests are compiled on the machine that runs them: `oxidized` + `rustc` must be installed (cold build ~1-6 s, cached by content hash in `.ox-build`); a game without `oxidized` logs "scripting unavailable" and runs scripted objects without behavior. No static/ship build of scripts yet (option (a)) | Stage 5 | `engine/src/script/ox/` |
+| The bundled games attach `.ox` behaviors, feed them input and apply `set_rot`/`set_scale`, but log `spawn`/`despawn` script commands as unsupported; `.ox` has no `screen_flash`; bool-returning natives are `Int` (oxidized cannot use a `bool` native as a condition); no script-level debugger or line numbers for runtime panics | Stage 5 | `engine::script::ox::host` |
+| Hot reload of `.ox` behaviors and the F-key inspector Script section (Attach/Reload/Edit Inline/Save) were never driven by hand in a window; the tests cover rebuild+swap headlessly. Smoke scripts cannot read game state (log-line checks only) | Stage 5 | |
+| Old `.pss` scripts in user projects are not loaded (logged as unsupported); `oxc_scripts convert` migrates the behavior subset, smoke drivers must be ported by hand | Stage 5 | `tools/oxc_scripts` |
 | Physics: see the **Physics audit** table below (what exists/tested/missing: no convex mesh, no angular dynamics, no body CCD, no kinematic flag, no islands) | Stage 5 | `engine/src/physics/` |
 | `new_game.sh` / `package.sh` (bash) exist alongside the PowerShell scripts; `new_game.sh` was checked by scaffolding a copy and `cargo check`ing it, `package.sh` only by `bash -n` and a dry run. No web (emscripten) packaging: no build recipe is documented in the repo | Stage 5 | `new_game.sh`, `package.sh` |
 | CI has Windows and Linux jobs (`.github/workflows/ci.yml`; the Linux job was validated as YAML only, never run on GitHub); web is not gated | Stage 0 | |

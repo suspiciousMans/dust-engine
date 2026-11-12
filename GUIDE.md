@@ -51,7 +51,6 @@ jame-engine/
     physics-sandbox/         small particle/physics toy; the reference host for EditorRuntime
   tools/
     oxc_scripts/             workspace member
-    script_editor/           standalone .pss editor (not a workspace member at this commit)
 ```
 
 ## Quick start
@@ -400,7 +399,7 @@ if the watcher fails to start, the same convention as `audio: Option<AudioContex
 those are edited live in the F2 panel and watching them risks fighting an
 in-progress edit or the undo stack. Each frame, a changed path is matched
 against: the active shader profile's three shader files (re-applies the
-profile), any live entity's attached `.pss` script path (re-attaches it), or
+profile), or
 any live `MeshRenderer`'s texture path (reloads and swaps the GPU texture in
 place). Edit a shader or script in your text editor while the game is
 running and the change appears within a frame or two, no manual F2 "Reload"
@@ -608,11 +607,11 @@ every call site checks `Some` first, so a game runs fine, just silent, on
 a machine with no audio hardware.
 
 **Scripts and native `Behavior`s** reach SFX through the same `ScriptApi`
-trait as everything else: `play_sfx(path)` (a script call) /
+trait as everything else: `play_sound(path)` (an `.ox` script call) /
 `ScriptApi::play_sfx(&mut self, path: &str)` (native), resolved relative to
 the asset root the same way script/texture paths are. See
-`bob_demo.pss`'s `interact()`, which calls both `play_tone` and
-`play_sfx("sfx/demo_blip.wav")` side by side — procedural and
+`bob_demo.ox`'s `on_interact()`, which calls both `play_tone` and
+`play_sound("sfx/demo_blip.wav")` side by side — procedural and
 sample-based, from the same script.
 
 **Background music is level-wide**, not per-object: `Level.music_path:
@@ -1254,54 +1253,50 @@ was confirmed to start up cleanly with the subsystem initialized, but
 
 ## Scripting
 
-A small custom scripting language — `.pss` files ("PS2 Script") — lets you
-attach programmable behavior to a level object without recompiling the
-engine. It's deliberately minimal: a hand-written lexer/parser/tree-walking
-interpreter (`engine::script`), not an embedded crate like Lua/Rhai, and
-not a general-purpose language — just enough to write per-object game
-logic.
+Per-object behavior is written in **Oxidized** (`.ox`), a small typed
+language that transpiles to Rust (the `oxidized` compiler lives outside this
+repo). The old interpreted `.pss` language is retired: there is no `.pss`
+interpreter, no `legacy-pss` feature and no standalone script editor any
+more. Full design, measurements and limits: **`docs/SCRIPTING-OXIDIZED.md`**.
 
-### Language
+How a script runs: `foo.ox` -> `oxidized build` -> Rust -> `rustc --crate-type
+cdylib` -> loaded with `libloading` -> wrapped as an `engine::behavior::Behavior`
+(`engine::script::ox::OxBehavior`). Builds are cached on disk by content hash
+(`<asset root>/.ox-build`, git-ignored): a cold build is ~1-6 s, an unchanged
+script loads instantly. Saving a script while the game runs rebuilds it on a
+worker thread and live-swaps every entity using it, keeping per-entity state; a
+broken save logs `file:line:col: message` and the last good build keeps running.
+`oxidized` and `rustc` must be installed on the machine that builds scripts
+(`$OXIDIZED_BIN`, `PATH`, `~/.local/bin`, `~/oxidized/target/release`).
+
+### Language (what scripts look like)
 
 ```
-let phase = 0.0;          // top-level `let` = the script's persistent state
-let amplitude = 0.4;       // ("fields" that survive across separate calls)
-
-fn ready() { }             // called once when the script is attached/loaded
-fn update(dt) { }          // called every frame in Play mode
-fn interact() { }          // called when the player interacts (E / gamepad X)
-fn trigger_enter(other) { }// called when something enters this trigger
-fn trigger_exit(other) { } // called when something exits this trigger
-
-fn update(dt) {
-    phase = phase + dt;                  // assignment (no `let`) updates an
-    if phase > 10.0 { phase = 0.0; }     // existing variable, local or global
-    let wave = sin(phase);               // function-local `let`
-    move_by(0.0, wave * amplitude, 0.0);
+# scripts/bob_demo.ox
+fn on_ready() { log("ready") }                  # hooks; unannotated params are rejected
+fn on_update(dt: Float) {
+    let phase = get_var("phase", 0.0) + dt      # script functions are stateless: per-entity
+    set_var("phase", phase)                     #   state lives in engine-held variables
+    let wave = sin(phase / tunable("period_secs", 2.0) * tau())
+    move_by(0.0, tunable("amplitude", 0.4) * wave, 0.0)
+    hud_bar("Wobble", wave * 0.5 + 0.5)
 }
+fn on_interact() { play_tone(500.0, 0.1) }
+fn on_trigger_enter(other: String) { log("hello " + other) }
+fn on_trigger_exit(other: String) { }
 ```
 
-Keywords: `let fn if else while return true false nil and or not`. Operators:
-`+ - * / % == != < <= > >=`, `//` line comments. Built-in math (no host
-needed): `sin cos abs sqrt min max floor`. There are no closures, classes,
-or arrays — a script is one flat set of globals plus top-level functions,
-which is all the hooks above need. All five hook functions are optional; a
-script that doesn't define e.g. `interact` just does nothing when
-interacted with.
+Hooks (all optional): `on_ready()` (alias `on_start()`), `on_update(dt: Float)`,
+`on_interact()`, `on_trigger_enter(other: String)`, `on_trigger_exit(other: String)`.
 
-**Standard library** (everything a script can call besides built-in math):
-`log(msg, ...)`, `get_x()`/`get_y()`/`get_z()`, `set_position(x,y,z)`,
-`move_by(dx,dy,dz)`, `play_tone(freq,duration)`, `time()`,
-`hud_bar(name, fraction)`, `toast(message, seconds)`,
-`screen_flash(r,g,b,strength,fade_in,hold,fade_out)`,
-`camera_shake(intensity,duration)`. Position is three scalar calls rather
-than one call returning a triple — the language has no vector/tuple type.
-`hud_bar`/`toast` drive the in-game HUD (see "In-game HUD" below) — a
-script can update a named progress bar or pop a fading toast the same way
-a native `Behavior` can. `screen_flash` fires a full-screen color tint (see
-"Screen effects" above) the same way a trigger's `screen_effect` does;
-`camera_shake` jostles the view the same way a trigger's `camera_shake`
-does (see "Play mode" above).
+**Script-facing API** (single source of truth: `engine/src/script/ox/build/spec.rs`):
+transform `pos(axis) set_pos move_by rot(axis) set_rot scale(axis) set_scale`
+(axis 0/1/2); input `key_down(key) key_pressed(key)` (return `Int` 1/0) and
+`axis(name)`; world `spawn despawn`; `log time play_sound play_tone`;
+data `tunable(name, default) get_var(name, default) set_var(name, value)`;
+HUD/camera `hud_bar toast camera_shake`; math `sin cos tan atan2 clamp lerp pi tau`.
+`oxc_scripts api` prints the generated declarations. Not available from
+`.ox`: `screen_flash` (there is no native for it yet).
 
 ### `Behavior`/`ScriptApi` — using Rust the same way a script would
 
@@ -1313,6 +1308,7 @@ pub trait ScriptApi {
     fn set_position(&mut self, x: f32, y: f32, z: f32);
     fn move_by(&mut self, dx: f32, dy: f32, dz: f32);
     fn play_tone(&mut self, frequency_hz: f32, duration_secs: f32);
+    fn play_sfx(&mut self, path: &str);
     fn elapsed(&self) -> f32;
     fn set_hud_bar(&mut self, name: &str, fraction: f32);
     fn show_toast(&mut self, message: &str, seconds: f32);
@@ -1329,74 +1325,55 @@ pub trait Behavior: Send + Sync {
 pub struct BehaviorSlot(pub Box<dyn Behavior>);  // the ECS component
 ```
 
-`ScriptBehavior` implements `Behavior` by running a compiled `.pss` script
-against these same five hooks. Crucially, **a plain Rust type can implement
-`Behavior` directly** — see `engine::behavior::NativeBobBehavior` — and gets
-attached to an entity via the exact same `BehaviorSlot` component. The game
-dispatches through the `Behavior` trait uniformly and never needs to know
-whether a given entity's logic came from a script or from compiled Rust.
-That's the whole point: **prototype as a script, port to native Rust later
-for performance or complex logic, and nothing about how it's wired into the
-game has to change** — same trait, same hooks, same attach point.
+`OxBehavior` implements `Behavior` by calling the compiled script's hooks.
+Crucially, **a plain Rust type can implement `Behavior` directly** — see
+`engine::behavior::NativeBobBehavior` — and gets attached to an entity via the
+exact same `BehaviorSlot` component. The game dispatches through the `Behavior`
+trait uniformly and never needs to know whether a given entity's logic came
+from a script or from compiled Rust: **prototype as a script, port to native
+Rust later, and nothing about how it's wired into the game has to change.**
 
-The default level's **"Script Demo Cube"** (running `scripts/bob_demo.pss`)
+The default level's **"Script Demo Cube"** (running `scripts/bob_demo.ox`)
 and **"Native Behavior Cube"** (running `NativeBobBehavior`, spawned in
 `Sandbox::spawn_native_behavior_demo`) stand side by side and do the
 identical sine-bob motion + interact log/tone — one from a script, one from
-compiled Rust — to make the parity concrete. Note the native one is a
-compiled-in demo, not saved level data (`NativeBehaviorDemoMarker` tells
-`build_level_from_ecs` to skip it) — that's the actual tradeoff: a script
-can be authored, saved, and reloaded as level data; a native `Behavior` has
-to be wired up in code. Use a script when you want data-driven, editable
-logic; port to native Rust when a script becomes a performance bottleneck
-or needs something the language can't express.
+compiled Rust. The native one is a compiled-in demo, not saved level data
+(`NativeBehaviorDemoMarker` tells `build_level_from_ecs` to skip it).
 
-### Runtime wiring (`games/sandbox/src/main.rs`)
+### Runtime wiring (`games/*/src/main.rs`, `engine::script::ox::OxScripts`)
 
-- `LevelObject.script: Option<PathBuf>` points at a `.pss` file;
-  `spawn_level_object` compiles it and attaches a `BehaviorSlot` if present
-  (a parse/read failure is logged and the object still spawns, just without
-  behavior — same tolerance as a missing texture falling back to white).
-- `Sandbox::with_behavior(entity, |behavior, api| ...)` is the one place
-  that bridges `Behavior`/`ScriptApi` to the ECS: it fetches
-  `(&mut Transform, &mut BehaviorSlot)` for one entity via the same
-  "combined tuple `query_one`" idiom used everywhere else in this file, and
-  builds a `ScriptApi` scoped to just that entity.
+- `LevelObject.script: Option<PathBuf>` points at an `.ox` file relative to the
+  asset root (`scripts/bob_demo.ox`). `Game::make_script_behavior` asks
+  `OxScripts` (created lazily, so a game without scripted objects never needs
+  `oxidized`) for a behavior; a build error is logged and the object still
+  spawns, with an idle behavior that a fixed save hot-swaps in. A non-`.ox`
+  path (e.g. an old `.pss`) is logged as unsupported and ignored.
+- Each frame `update` calls `OxScripts::begin_frame(&ctx.input)` (the input
+  snapshot scripts read with `key_down`/`axis`), logs finished background
+  rebuilds from `poll()`, and applies queued `set_rot`/`set_scale` commands to
+  `Transform`s with `apply_commands`. `spawn`/`despawn` commands are returned
+  to the game; the bundled games log them as unsupported.
+- `Game::with_behavior(entity, |behavior, api| ...)` is the one place that
+  bridges `Behavior`/`ScriptApi` to the ECS (unchanged).
 - `on_update` is dispatched for every `BehaviorSlot` entity once per frame,
-  **Play mode only** (like physics and player input — a script's `update`
-  is generally written assuming the game is actually running).
-  `on_interact` extends the existing `interact()` hook: a nearby entity
-  with a `BehaviorSlot` gets its own `on_interact` called *instead of* the
-  generic "push it" demo. `on_trigger_enter`/`on_trigger_exit` extend the
-  existing trigger log+tone the same way, additively.
+  **Play mode only**. `on_interact` extends the existing `interact()` hook: a
+  nearby entity with a `BehaviorSlot` gets its own `on_interact` called
+  *instead of* the generic "push it" demo; `on_trigger_enter`/`on_trigger_exit`
+  extend the existing trigger log+tone additively.
 
-### F2 panel
+### Migrating an old `.pss` script
 
-The selected object's panel gains a **Script** section: the current path
-(or "None"), **Attach/Change Script...** (a `.pss` file picker),
-**Reload** (re-reads and re-compiles from disk, re-firing `ready`), an
-**Edit Inline** checkbox that reveals a monospace text box + **Save**
-(writes the file and reloads), and **Open in Script Editor**, which
-launches the standalone editor below pointed at the file.
+`cargo run -p oxc_scripts -- convert path/to/foo.pss [--out-dir DIR]` converts
+the behavior subset (hook renames, `get_x/y/z` -> `pos`, top-level `let` ->
+`get_var/set_var`, `play_sfx` -> `play_sound`, ...) and prints warnings for
+what needs hand work. Check the result with `oxc_scripts build <dir>`.
 
-### The standalone editor (`tools/script_editor`)
+### Editing scripts
 
-A separate app — build/run it with `cargo run -p script_editor [path]`.
-It reuses `engine::app`/`engine::ui` (the same `Platform`/`EguiState` as the
-game) rather than a different windowing stack, and draws no 3D content at
-all — proof those pieces of `engine` are reusable outside a "real" game.
-New / Open / Save / Save As, a full-window monospace text box, and
-**Check Syntax**, which calls `engine::script::Interpreter::compile`
-directly (no `Host`/`ScriptApi` needed — it only type-checks, it can't run
-a script against a game) and reports every parse error with a line number.
-No token syntax-highlighting yet — plain text editing, noted here as a
-known simplification, easy to add later via a custom egui `LayoutJob`.
-
-The F2 panel's "Open in Script Editor" button launches this as a sibling
-process (`std::process::Command`), assuming `script_editor(.exe)` sits next
-to the game's own executable — true when both are built from this
-workspace's `target/{profile}/` folder, which is a dev-time convenience
-only; it's not something a shipped game needs to carry.
+The inspector's Script section (**Attach/Change Script...** picks an `.ox`
+file, **Reload**, **Edit Inline** + **Save**) is unchanged; Save writes the file
+and the watcher rebuilds it. Use any text editor otherwise; there is no
+dedicated script editor app.
 
 ## Character rigs
 
@@ -1757,44 +1734,48 @@ reconstruct "which level should be active," just where you were standing.
 
 `engine::app::App::run_scripted` is a separate loop from `App::run` (not a
 flag on it, so the production path stays completely untouched) that drives
-a game with a compiled `.pss` script instead of a human — a real SDL2
-window still opens (there's no headless mode in this engine); run under
-`SDL_VIDEODRIVER=dummy` for CI. Each frame, after polling real SDL events
-(so window-close still works), it calls the script's own `tick()` function
-once via `engine::testkit::SmokeTestHost` — a `Host` implementation that's
-the entire "standard library" a smoke-test script sees:
+a game with an Oxidized script instead of a human — a real SDL2
+window still opens (there's no headless mode in this engine). Each frame,
+after polling real SDL events (so window-close still works), it calls the
+script's `fn tick(frame: Int, t: Float)` once (`frame` counts calls from 0,
+`t` is `ctx.time.elapsed`). The script is compiled with the **smoke** profile
+(`engine::script::ox::SmokeDriver`, spec in `build/spec.rs::SMOKE_SPEC`), whose
+whole "standard library" is:
 
 - **`press(key_name)`** / **`release(key_name)`** — queues a synthetic SDL
   key event (by SDL key name, e.g. `"W"`, `"F3"`), fed through the exact
   same `ctx.input.handle_event` + `game.handle_event` path a real keypress
-  takes, right after `tick()` returns.
-- **`time()`** — seconds since the game started (`ctx.time.elapsed`).
-- **`assert_true(cond, message)`** / **`assert_eq(a, b, message)`** — a
-  failure logs the message and marks the run failed, but doesn't stop it
-  (so a script can keep asserting through the rest of its flow).
-- **`finish(passed)`** — ends the run. `run_scripted` returns `Ok(0)` if the
+  takes, right after `tick` returns. An unknown key name fails the run.
+- **`time()`** — same value as `t`.
+- **`assert_true(cond: Bool, message)`** / **`assert_eq(a: Float, b: Float, message)`** /
+  **`assert_eq_str(a, b, message)`** — a failure logs the message and marks the
+  run failed; the run ends at the end of that frame.
+- **`finish(ok: Bool)`** — ends the run. `run_scripted` returns `Ok(0)` if the
   run passed (and no assertion failed), `Ok(1)` otherwise — including the
-  window closing early or `tick()` erroring, both treated as failures.
-- **`log(...)`** — same as the in-game scripting `log`, prefixed
-  `[smoke test]`.
+  window closing early or `tick` panicking, both treated as failures. An
+  earlier assertion failure wins over a later `finish(true)`.
+- **`log(msg)`** — logged as `[smoke test] msg`.
+- **`get_var(name, default)`** / **`set_var(name, value)`** — script functions
+  are stateless, so a script drives itself as an explicit phase state machine
+  through these (see the `enter_phase`/`seconds_in_phase` helpers in the
+  bundled scripts) across many `tick` calls.
 
-Since the `.pss` language has no coroutines, a script can't literally
-"block" on `wait(seconds)` — instead a script drives itself as an explicit
-phase state machine using its own persistent globals and `time()`,
-transitioning phases across many `tick()` calls. See
-`games/sandbox/scripts/smoke/basic_playthrough.pss` (enters Play mode,
-walks forward for a couple of seconds, asserts in-game time advanced, and
-finishes) and `games/mushroom_man/scripts/smoke/talk_to_sprite.pss` (adds a
-short turn-and-interact phase) for the pattern.
+See `games/sandbox/scripts/smoke/basic_playthrough.ox` pattern (enter Play mode,
+walk, assert time advanced, finish), `games/mushroom_man/scripts/smoke/talk_to_sprite.ox`
+(adds a turn-and-interact phase) and the three `docked_editor.ox` scripts. Smoke
+scripts cannot read game state; checks are log lines (`games/sandbox/scripts/smoke/check_docked_editor.sh`
+greps them).
 
-Each game's `main()` checks for a `--smoke-test <path>` argument before
-falling through to the normal interactive `App::run`; when present, it
-compiles the script and calls `App::run_scripted`, then
-`std::process::exit`s with the returned code — CI-friendly pass/fail:
+Each game's `main()` checks for a `--smoke-test <script.ox>` argument before
+falling through to the normal interactive `App::run`; when present, it builds
+(or reuses the cached build, `<script dir>/.ox-build`) and loads the script,
+calls `App::run_scripted`, then `std::process::exit`s with the returned code.
+Build cost: ~1-2 s cold (oxidized + rustc, opt-level 1), ~0 s cached. A `.pss`
+path is rejected with an error.
 
 ```
-cargo run -p sandbox -- --smoke-test scripts/smoke/basic_playthrough.pss
-cargo run -p mushroom_man -- --smoke-test scripts/smoke/talk_to_sprite.pss
+cargo run -p sandbox -- --smoke-test scripts/smoke/basic_playthrough.ox
+cargo run -p mushroom_man -- --smoke-test scripts/smoke/talk_to_sprite.ox
 ```
 
 ## Multiplayer
@@ -2415,8 +2396,8 @@ fn editor_play_and_stop_without_a_window() {
 }
 ```
 
-`engine::testkit::SmokeTestHost` is a different tool: it drives a *running*
-game from a `.pss` script (see "Scripted smoke tests").
+`engine::script::ox::SmokeDriver` is a different tool: it drives a *running*
+game from an `.ox` script (see "Scripted smoke tests").
 
 ## The docked editor
 

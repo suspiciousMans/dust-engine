@@ -47,9 +47,9 @@ being reworked, so check there if a key differs. Release builds have no editor.
   AABB/Sphere collision)
 - **Object classes** — share mesh/texture/physics/behavior across many
   placed instances from one editable "class," like a lightweight prefab
-- **Scripting** — a small custom language (`.pss` files) for per-object
-  behavior, plus a standalone script editor tool, with native Rust as a
-  drop-in alternative to a script for the same hooks
+- **Scripting** — Oxidized (`.ox` files, transpiled to Rust, hot-reloaded)
+  for per-object behavior and scripted smoke tests, with native Rust as a
+  drop-in alternative to a script for the same hooks (`docs/SCRIPTING-OXIDIZED.md`)
 - **Character rigs** — segmented (non-skinned) rigid-part rigs with
   keyframed clips and smooth clip-to-clip blending
 - **Particles**, **point lights**, **trigger volumes**, and simple
@@ -71,7 +71,7 @@ jame-engine/
   games/sandbox/      the demo game — also the template for starting a new one
   games/physics-sandbox/  small particle/physics toy; reference host for the docked editor (F1)
   games/mushroom_man/, games/walkaround_demo/  larger demos from the same template
-  tools/script_editor/ standalone editor for .pss script files (not a workspace member)
+  tools/oxc_scripts/   builds .ox scripts, prints the script API, migrates old .pss files
   new_game.ps1 / .sh   scaffold a new game from the sandbox template
   package.ps1 / .sh    builds a game in release mode and assembles a dist/ folder
   docs/               ROADMAP.md (status), KNOWN-ISSUES.md, examples/
