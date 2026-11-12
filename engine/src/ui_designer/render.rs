@@ -24,11 +24,15 @@ pub struct DrawParams<'a> {
     /// Node drawn with the `focused` style (from [`super::UiFocus`]).
     pub focus: Option<NodeId>,
     pub images: Option<&'a dyn ImageProvider>,
+    /// Top-left of the UI in screen points. `ZERO` for a full-window UI;
+    /// set it (with `viewport` = the region's size) to draw into a sub-rect
+    /// such as the docked editor's Viewport tab.
+    pub origin: Pos2,
 }
 
 impl<'a> DrawParams<'a> {
     pub fn new(viewport: Vec2) -> Self {
-        DrawParams { viewport, ui_scale: 1.0, safe_area: Insets::ZERO, focus: None, images: None }
+        DrawParams { viewport, ui_scale: 1.0, safe_area: Insets::ZERO, focus: None, images: None, origin: Pos2::ZERO }
     }
 }
 
@@ -79,11 +83,11 @@ pub fn draw_ui_tree_with(ctx: &egui::Context, doc: &UiDoc, bindings: &UiBindings
 
     let mut result = UiFrameResult::default();
     let area_id = egui::Id::new(("ui_tree", doc.name.as_str()));
-    egui::Area::new(area_id).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(area_id).fixed_pos(params.origin).order(egui::Order::Foreground).show(ctx, |ui| {
         let nodes = index_nodes(doc);
-        let mut states = interact_nodes(ui, &nodes, &layout, Some(bindings), &mut result);
+        let mut states = interact_nodes(ui, &nodes, &layout, Some(bindings), params.origin, &mut result);
         states.focused = params.focus;
-        paint_ui(&ui.painter().clone(), Pos2::ZERO, 1.0, doc, &layout, Some(bindings), &states, params.images);
+        paint_ui(&ui.painter().clone(), params.origin, 1.0, doc, &layout, Some(bindings), &states, params.images);
     });
     result.layout = layout;
     result
@@ -112,6 +116,7 @@ fn interact_nodes(
     nodes: &HashMap<NodeId, &UiNode>,
     layout: &LayoutResult,
     bindings: Option<&UiBindings>,
+    origin: Pos2,
     out: &mut UiFrameResult,
 ) -> NodeStates {
     let mut states = NodeStates::default();
@@ -126,7 +131,7 @@ fn interact_nodes(
             (true, NodeKind::Slider { .. }) => Sense::click_and_drag(),
             (true, _) => Sense::click(),
         };
-        let rect = to_egui_rect(e.rect, Pos2::ZERO, 1.0);
+        let rect = to_egui_rect(e.rect, origin, 1.0);
         let resp = ui.interact(rect, ui.id().with(("node", e.id)), sense);
         if resp.hovered() {
             states.hovered = Some(e.id);
@@ -201,7 +206,8 @@ pub fn paint_ui(
             disabled: !enabled,
             focused: states.focused == Some(e.id),
         };
-        let style = doc.styles.resolve(node.kind.name(), &node.classes, state);
+        let classes = resolve_classes(node, bindings);
+        let style = doc.styles.resolve(node.kind.name(), &classes, state);
         let rect = to_egui_rect(e.rect, origin, zoom);
         let content = to_egui_rect(e.content, origin, zoom);
         let rounding = Rounding::same(style.corner_radius * unit);
@@ -226,7 +232,7 @@ pub fn paint_ui(
         }
 
         // Focus ring for widgets whose style has no dedicated focus border.
-        if state.focused && doc.styles.resolve(node.kind.name(), &node.classes, WidgetState::default()).border_width == style.border_width {
+        if state.focused && doc.styles.resolve(node.kind.name(), &classes, WidgetState::default()).border_width == style.border_width {
             painter.rect_stroke(rect.expand(2.0 * unit), rounding, Stroke::new(2.0 * unit, color32([1.0, 0.85, 0.3, 1.0], opacity)));
         }
     }

@@ -1,0 +1,172 @@
+// Sandbox in-game HUD. Everything on screen during Play comes from this file;
+// the game only publishes values (see `Sandbox::publish_ui_bindings`).
+// Edit it in the editor's UI Designer tab (F4 / DUST_EDITOR=1) and Save: the
+// running game hot-reloads it.
+//
+// Bindings published by the game:
+//   hud.title / hud.has_title                  optional heading
+//   hud.bar.health (0..1), hud.bar.health_pct, hud.bar.health.visible, hud.bar.health.class
+//   hud.toast.{0,1,2}.{text,alpha,visible}     fading messages, newest last
+//   play.hint                                   "Esc to pause · F3 stop · …"
+//   level.name, perf.fps, perf.ms, hud.show_stats   (toggled from the pause menu)
+//   net.active (bool), net.status
+(
+    name: "hud",
+    scale_mode: ScaleWithScreen(reference: (1280.0, 720.0), match_height: 0.5),
+    respect_safe_area: true,
+    styles: (
+        classes: {
+            "hud_title": (base: (font_size: Some(20.0))),
+            "bar": (
+                base: (
+                    bg_color: Some((0.12, 0.12, 0.12, 0.85)),
+                    accent_color: Some((0.3, 0.7, 0.3, 1.0)),
+                    corner_radius: Some(2.0),
+                    font_size: Some(12.0),
+                ),
+            ),
+            "bar_low": (base: (accent_color: Some((0.85, 0.2, 0.15, 1.0)))),
+            "toast": (base: (text_color: Some((1.0, 1.0, 1.0, 1.0)))),
+            "chip": (
+                base: (
+                    bg_color: Some((0.09, 0.10, 0.13, 0.85)),
+                    border_width: Some(1.0),
+                    border_color: Some((0.35, 0.37, 0.45, 1.0)),
+                    corner_radius: Some(4.0),
+                    font_size: Some(13.0),
+                ),
+            ),
+        },
+    ),
+    root: (
+        name: "Root",
+        kind: Panel,
+        children: [
+            (
+                name: "TopLeft",
+                kind: VStack(spacing: 4.0),
+                anchor_min: (0.0, 0.0),
+                anchor_max: (0.0, 0.0),
+                pivot: (0.0, 0.0),
+                offset_min: (12.0, 12.0),
+                width: Fixed(180.0),
+                height: Fit,
+                children: [
+                    (
+                        name: "Title",
+                        kind: Label(text: ""),
+                        classes: ["hud_title"],
+                        width: Fit,
+                        height: Fit,
+                        bindings: {"text": "{hud.title}", "visible": "hud.has_title"},
+                    ),
+                    (
+                        name: "HealthBar",
+                        kind: ProgressBar(value: 0.0, min: 0.0, max: 1.0),
+                        classes: ["bar"],
+                        height: Fixed(16.0),
+                        bindings: {
+                            "value": "hud.bar.health",
+                            "text": "Health: {hud.bar.health_pct:.0}%",
+                            "visible": "hud.bar.health.visible",
+                            "class": "hud.bar.health.class",
+                        },
+                    ),
+                    (
+                        name: "Toast0",
+                        kind: Label(text: ""),
+                        classes: ["toast"],
+                        width: Fit,
+                        height: Fit,
+                        bindings: {"text": "{hud.toast.0.text}", "visible": "hud.toast.0.visible", "opacity": "hud.toast.0.alpha"},
+                    ),
+                    (
+                        name: "Toast1",
+                        kind: Label(text: ""),
+                        classes: ["toast"],
+                        width: Fit,
+                        height: Fit,
+                        bindings: {"text": "{hud.toast.1.text}", "visible": "hud.toast.1.visible", "opacity": "hud.toast.1.alpha"},
+                    ),
+                    (
+                        name: "Toast2",
+                        kind: Label(text: ""),
+                        classes: ["toast"],
+                        width: Fit,
+                        height: Fit,
+                        bindings: {"text": "{hud.toast.2.text}", "visible": "hud.toast.2.visible", "opacity": "hud.toast.2.alpha"},
+                    ),
+                ],
+            ),
+            (
+                name: "HintChip",
+                kind: HStack(spacing: 0.0),
+                classes: ["chip"],
+                anchor_min: (0.5, 0.0),
+                anchor_max: (0.5, 0.0),
+                pivot: (0.5, 0.0),
+                offset_min: (0.0, 12.0),
+                width: Fit,
+                height: Fit,
+                padding: (left: 10.0, top: 5.0, right: 10.0, bottom: 5.0),
+                children: [
+                    (
+                        name: "Hint",
+                        kind: Label(text: ""),
+                        width: Fit,
+                        height: Fit,
+                        bindings: {"text": "{play.hint}"},
+                    ),
+                ],
+            ),
+            (
+                name: "TopRight",
+                kind: VStack(spacing: 4.0, cross_align: End),
+                anchor_min: (1.0, 0.0),
+                anchor_max: (1.0, 0.0),
+                pivot: (1.0, 0.0),
+                offset_min: (-12.0, 12.0),
+                width: Fit,
+                height: Fit,
+                children: [
+                    (
+                        name: "StatsChip",
+                        kind: HStack(spacing: 0.0),
+                        classes: ["chip"],
+                        width: Fit,
+                        height: Fit,
+                        padding: (left: 8.0, top: 4.0, right: 8.0, bottom: 4.0),
+                        bindings: {"visible": "hud.show_stats"},
+                        children: [
+                            (
+                                name: "Stats",
+                                kind: Label(text: ""),
+                                width: Fit,
+                                height: Fit,
+                                bindings: {"text": "{level.name} · {perf.fps:.0} fps · {perf.ms:.1} ms"},
+                            ),
+                        ],
+                    ),
+                    (
+                        name: "NetChip",
+                        kind: HStack(spacing: 0.0),
+                        classes: ["chip"],
+                        width: Fit,
+                        height: Fit,
+                        padding: (left: 8.0, top: 4.0, right: 8.0, bottom: 4.0),
+                        bindings: {"visible": "net.active"},
+                        children: [
+                            (
+                                name: "Net",
+                                kind: Label(text: ""),
+                                width: Fit,
+                                height: Fit,
+                                bindings: {"text": "Net: {net.status}"},
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    ),
+)
