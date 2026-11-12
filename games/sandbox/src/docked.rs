@@ -47,7 +47,7 @@ use engine::renderer::PostParams;
 use engine::rig::{RigPart, RigPartMeta};
 use engine::sdl2::event::Event;
 use engine::sdl2::keyboard::Keycode;
-use engine::ui::{draw_hud, EditorTab};
+use engine::ui::EditorTab;
 
 use crate::{collider_half_extents, ClassMember, EditorMode, PendingTexturePick, Sandbox};
 
@@ -165,10 +165,9 @@ impl ShellHost for DockHost<'_> {
         }
         if g.mode == EditorMode::Play {
             // The HUD and dialogue choices anchor to the Viewport tab, not the window.
-            with_screen_rect(ctx, viewport, || {
-                draw_hud(ctx, &g.hud, &g.render_params.hud);
-                g.draw_dialogue_choices(ctx);
-            });
+            g.publish_game_ui(true);
+            g.game_ui.draw_hud(ctx, viewport);
+            with_screen_rect(ctx, viewport, || g.draw_dialogue_choices(ctx));
             if g.paused {
                 let (m, a) = g.draw_pause_side_panels(ctx);
                 self.pending.multiplayer = m;
@@ -194,8 +193,9 @@ impl Sandbox {
         // The game restores itself on Stop (`exit_play_mode`).
         rt.shell.snapshot = Box::new(NullSnapshot);
         // The Assets tab browses the asset root (the same root texture paths are relative to);
-        // the UI Designer reads and writes `<root>/ui`.
-        let ui_dir = self.asset_root.join("ui");
+        // the UI Designer reads and writes `<root>/assets/ui` - the same HUD and
+        // pause-menu documents the running game hot-reloads (`game_ui.rs`).
+        let ui_dir = crate::game_ui::ui_dir(&self.asset_root);
         if let Err(err) = std::fs::create_dir_all(&ui_dir) {
             log::warn!("UI document directory {ui_dir:?} unavailable: {err}");
         }

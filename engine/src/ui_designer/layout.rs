@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use super::bindings::{resolve_text, resolve_visible, UiBindings};
+use super::bindings::{resolve_classes, resolve_text, resolve_visible, UiBindings};
 use super::model::*;
 use super::style::WidgetState;
 
@@ -353,7 +353,7 @@ impl<'a> Solver<'a> {
     }
 
     fn text_size(&self, node: &UiNode) -> [f32; 2] {
-        let style = self.doc.styles.resolve(node.kind.name(), &node.classes, WidgetState::default());
+        let style = self.doc.styles.resolve(node.kind.name(), &resolve_classes(node, self.p.bindings), WidgetState::default());
         self.p.measure.measure(&resolve_text(node, self.p.bindings), style.font_size)
     }
 

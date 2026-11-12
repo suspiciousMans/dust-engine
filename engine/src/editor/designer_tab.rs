@@ -283,4 +283,58 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    /// The point of `EditorRuntime::set_ui_dir`: the tab lists the game's
+    /// documents, and saving an edit there reaches a `UiScreen` the running
+    /// game holds on the same file.
+    #[test]
+    fn saving_in_the_tab_hot_reloads_the_games_screen() {
+        use crate::ui_designer::{NodeKind, ReloadStatus, UiScreen};
+        let dir = temp_dir("game_screen");
+        let hud_path = dir.join("hud.ron");
+        crate::ui_designer::save_doc(&examples::hud_doc(), &hud_path).unwrap();
+        crate::ui_designer::save_doc(&examples::pause_menu_doc(), &dir.join("pause_menu.ron")).unwrap();
+
+        let mut screen = UiScreen::load("hud", &hud_path, None);
+        let mut tab = DesignerTab::new(Some(dir.clone()));
+        assert_eq!(tab.documents(), &[hud_path.clone(), dir.join("pause_menu.ron")], "both game documents are listed");
+        tab.open(&hud_path).unwrap();
+        assert_eq!(tab.state.doc, *screen.doc());
+        assert_eq!(screen.poll(), ReloadStatus::Unchanged);
+
+        // Edit the title label's text in the tab and save (the toolbar's Save).
+        let mut edited = false;
+        tab.state.checkpoint();
+        let mut doc = tab.state.doc.clone();
+        fn retext(n: &mut crate::ui_designer::UiNode, done: &mut bool) {
+            if n.name == "Title" {
+                n.kind = NodeKind::Label { text: "edited in the tab".into() };
+                *done = true;
+            }
+            for c in &mut n.children {
+                retext(c, done);
+            }
+        }
+        retext(&mut doc.root, &mut edited);
+        assert!(edited);
+        tab.state.doc = doc;
+        tab.state.save().unwrap();
+        // Coarse filesystem timestamps: make sure the save is seen as newer.
+        let f = std::fs::OpenOptions::new().write(true).open(&hud_path).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        drop(f);
+
+        assert_eq!(screen.poll(), ReloadStatus::Reloaded);
+        assert_eq!(screen.doc(), &tab.state.doc);
+        let mut text = String::new();
+        screen.doc().root.walk(&mut |n| {
+            if n.name == "Title" {
+                if let NodeKind::Label { text: t } = &n.kind {
+                    text = t.clone();
+                }
+            }
+        });
+        assert_eq!(text, "edited in the tab");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

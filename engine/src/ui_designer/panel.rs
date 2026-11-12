@@ -15,7 +15,7 @@ use super::render::{paint_ui, EguiTextMeasure, NodeStates};
 use super::style::{StyleClass, StyleProps, TextAlign};
 
 const HANDLE_RADIUS: f32 = 5.0;
-const PROPERTY_SUGGESTIONS: [&str; 8] = ["text", "value", "min", "max", "checked", "visible", "enabled", "opacity"];
+const PROPERTY_SUGGESTIONS: [&str; 9] = ["text", "value", "min", "max", "checked", "visible", "enabled", "opacity", "class"];
 
 /// Draw the whole designer into `ui` (give it a big area, e.g. a dock tab
 /// or `CentralPanel`).

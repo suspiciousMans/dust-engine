@@ -9,6 +9,10 @@
 //! * `checked` – value name; for Toggle.
 //! * `visible`, `enabled` – value name (truthy), optionally prefixed with `!` to negate.
 //! * `opacity` – value name (number 0..1).
+//! * `class`   – value name holding text; its whitespace-separated words are
+//!               style classes added after the node's own `classes`, so a bar
+//!               can turn red when the bound value is `"low"` and the stylesheet
+//!               has a `low` class.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -230,6 +234,15 @@ pub fn resolve_opacity(node: &UiNode, b: Option<&UiBindings>) -> f32 {
     o.clamp(0.0, 1.0)
 }
 
+/// The node's style classes plus those named by its `class` binding.
+pub fn resolve_classes(node: &UiNode, b: Option<&UiBindings>) -> Vec<String> {
+    let mut classes = node.classes.clone();
+    if let Some(v) = bound(node, "class", b) {
+        classes.extend(v.display(None).split_whitespace().map(String::from));
+    }
+    classes
+}
+
 // ---- events -----------------------------------------------------------------
 
 /// Something the player did to the UI, for the game to act on.
@@ -356,6 +369,18 @@ mod tests {
         assert!((resolve_opacity(&fade, Some(&b)) - 0.33333).abs() < 1e-5);
         let tog = UiNode::new(NodeKind::Toggle { text: "".into(), checked: false, on_toggle: None }).with_binding("checked", "paused");
         assert!(resolve_checked(&tog, Some(&b)));
+    }
+
+    #[test]
+    fn class_binding_appends_classes() {
+        let mut b = UiBindings::new();
+        b.set_text("bar.class", "low  pulse");
+        let bar = UiNode::new(NodeKind::ProgressBar { value: 0.0, min: 0.0, max: 1.0 })
+            .with_class("bar")
+            .with_binding("class", "bar.class");
+        assert_eq!(resolve_classes(&bar, Some(&b)), ["bar", "low", "pulse"]);
+        assert_eq!(resolve_classes(&bar, None), ["bar"]);
+        assert_eq!(resolve_classes(&bar, Some(&UiBindings::new())), ["bar"], "unknown value adds nothing");
     }
 
     #[test]

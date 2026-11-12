@@ -86,6 +86,9 @@ pub struct EditorRuntime {
     /// [`Self::set_ui_dir`].
     pub designer: DesignerTab,
     config_dir: Option<PathBuf>,
+    /// Writes changed Settings-tab prefs to `config_dir` without waiting for
+    /// `save_layout`.
+    prefs_autosave: super::prefs::PrefsAutosave,
 }
 
 impl EditorRuntime {
@@ -98,6 +101,7 @@ impl EditorRuntime {
             Some(dir) => EditorShell::load(dir, host_tabs),
             None => EditorShell::new(host_tabs),
         };
+        let prefs_loaded = shell.prefs.clone();
         Ok(Self {
             egui: EguiState::new(gl)?,
             shell,
@@ -107,6 +111,7 @@ impl EditorRuntime {
             open: false,
             assets: AssetsPanel::default(),
             designer: DesignerTab::default(),
+            prefs_autosave: super::prefs::PrefsAutosave::new(&prefs_loaded),
             config_dir,
         })
     }
@@ -207,10 +212,12 @@ impl EditorRuntime {
         self.assets.browser.ensure_thumbnails_loaded(gl, &mut self.egui);
         let Self { egui, shell, state, interaction, assets, designer, .. } = self;
         let mut scale = 1.0;
+        let mut pointer_down = false;
         let mut events = Vec::new();
         let output = egui.run(drawable, |ctx| {
             let mut host = WithImage { image, inner: host, assets, designer };
             scale = shell.ui(ctx, state, world, &mut host);
+            pointer_down = ctx.input(|i| i.pointer.any_down());
             for path in host.assets.take_opened() {
                 shell.push_event(super::shell::ShellEvent::AssetOpened(path));
             }
@@ -227,6 +234,11 @@ impl EditorRuntime {
             }
         });
         self.egui.ui_scale = scale;
+        if let Some(dir) = &self.config_dir {
+            if let Some(Err(e)) = self.prefs_autosave.tick(dir, &self.shell.prefs, pointer_down) {
+                log::warn!("editor settings not saved: {e}");
+            }
+        }
         self.egui.paint(drawable, output);
         events
     }

@@ -10,6 +10,7 @@ pub mod layout;
 pub mod model;
 pub mod panel;
 pub mod render;
+pub mod screen;
 pub mod style;
 
 pub use bindings::*;
@@ -20,4 +21,5 @@ pub use layout::*;
 pub use model::*;
 pub use panel::{canvas_geometry, draw_ui_designer};
 pub use render::*;
+pub use screen::{ReloadStatus, ScreenSource, UiScreen};
 pub use style::*;

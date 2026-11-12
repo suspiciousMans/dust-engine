@@ -61,6 +61,41 @@ impl EditorPrefs {
     }
 }
 
+impl EditorPrefs {
+    /// Back to the shipped defaults: theme (colours, font, size), keymap, UI
+    /// scale, grid and layout preset. The dock layout itself is rebuilt by
+    /// the caller (the Settings tab requests the default preset).
+    pub fn reset_to_defaults(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Saves [`EditorPrefs`] when they change (Settings tab edits), so settings
+/// survive a crash or a game that never calls `save_layout`. Waits while a
+/// pointer button is down so dragging a slider or colour picker writes one
+/// file at the end, not one per frame.
+#[derive(Debug, Default)]
+pub struct PrefsAutosave {
+    saved: Option<EditorPrefs>,
+}
+
+impl PrefsAutosave {
+    /// Treat `loaded` (what is already on disk, or the defaults) as saved.
+    pub fn new(loaded: &EditorPrefs) -> Self {
+        Self { saved: Some(loaded.clone()) }
+    }
+
+    /// Call once per frame. `Some(result)` when a save was attempted; a failed
+    /// save is reported once, not retried every frame.
+    pub fn tick(&mut self, dir: &Path, prefs: &EditorPrefs, pointer_down: bool) -> Option<Result<(), String>> {
+        if pointer_down || self.saved.as_ref() == Some(prefs) {
+            return None;
+        }
+        self.saved = Some(prefs.clone());
+        Some(save_prefs(dir, prefs))
+    }
+}
+
 pub fn prefs_path(dir: &Path) -> PathBuf {
     dir.join("editor_prefs.ron")
 }
@@ -111,6 +146,55 @@ mod tests {
         assert_eq!(EditorPrefs::from_ron(&p.to_ron().unwrap()).unwrap(), p);
         assert_eq!(EditorPrefs::from_ron("(ui_scale: 99.0)").unwrap().ui_scale, 3.0);
         assert!(EditorPrefs::from_ron("(keymap: \"Emacs\")").is_err());
+    }
+
+    #[test]
+    fn reset_restores_every_default() {
+        let mut p = EditorPrefs::default();
+        p.keymap = KeymapPreset::Blender;
+        p.ui_scale = 2.5;
+        p.show_grid = false;
+        p.layout_preset = LayoutPreset::Tall;
+        p.theme.accent = [1.0, 0.0, 0.0];
+        p.theme.font = "monospace".into();
+        p.theme.font_size = 20.0;
+        p.reset_to_defaults();
+        assert_eq!(p, EditorPrefs::default());
+    }
+
+    #[test]
+    fn autosave_writes_on_change_after_pointer_release_and_only_once() {
+        let d = tmp("autosave");
+        let mut p = EditorPrefs::default();
+        let mut auto = PrefsAutosave::new(&p);
+        assert!(auto.tick(&d, &p, false).is_none(), "unchanged prefs are not written");
+        assert!(!prefs_path(&d).exists());
+
+        p.ui_scale = 1.75;
+        assert!(auto.tick(&d, &p, true).is_none(), "wait while dragging");
+        assert!(!prefs_path(&d).exists());
+        assert!(matches!(auto.tick(&d, &p, false), Some(Ok(()))));
+        assert_eq!(load_prefs(&d).0.ui_scale, 1.75);
+        assert!(auto.tick(&d, &p, false).is_none(), "saved once");
+
+        p.theme.accent = [0.2, 0.3, 0.4];
+        assert!(matches!(auto.tick(&d, &p, false), Some(Ok(()))));
+        assert_eq!(load_prefs(&d).0, p);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn autosave_reports_a_failed_write_once() {
+        // A file where the config directory should be: create_dir_all fails.
+        let d = tmp("autosave_fail");
+        std::fs::create_dir_all(d.parent().unwrap()).unwrap();
+        std::fs::write(&d, "not a dir").unwrap();
+        let mut p = EditorPrefs::default();
+        let mut auto = PrefsAutosave::new(&p);
+        p.show_grid = false;
+        assert!(matches!(auto.tick(&d, &p, false), Some(Err(_))));
+        assert!(auto.tick(&d, &p, false).is_none(), "not retried every frame");
+        let _ = std::fs::remove_file(&d);
     }
 
     #[test]
