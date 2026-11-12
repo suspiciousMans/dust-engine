@@ -29,12 +29,32 @@ pub struct OxVal {
 }
 
 impl OxVal {
-    const NIL: OxVal = OxVal { tag: 0, i: 0, f: 0.0, s: std::ptr::null(), n: 0 };
-    fn int(i: i64) -> Self {
+    pub(super) const NIL: OxVal = OxVal { tag: 0, i: 0, f: 0.0, s: std::ptr::null(), n: 0 };
+    pub(super) fn int(i: i64) -> Self {
         Self { tag: 1, i, ..Self::NIL }
     }
-    fn float(f: f64) -> Self {
+    pub(super) fn float(f: f64) -> Self {
         Self { tag: 2, f, ..Self::NIL }
+    }
+    /// Numeric argument as `f64` (ints widen).
+    pub(super) fn num(&self) -> f64 {
+        if self.tag == 1 {
+            self.i as f64
+        } else {
+            self.f
+        }
+    }
+    /// String argument, or `""` for any other tag.
+    ///
+    /// # Safety
+    /// `s`/`n` must describe memory that is valid for the call (true for args
+    /// the shim passes into the host trampoline).
+    pub(super) unsafe fn str(&self) -> &str {
+        if self.tag == 4 && !self.s.is_null() {
+            std::str::from_utf8(std::slice::from_raw_parts(self.s, self.n)).unwrap_or("")
+        } else {
+            ""
+        }
     }
     #[allow(dead_code)]
     fn boolean(b: bool) -> Self {
@@ -42,7 +62,7 @@ impl OxVal {
     }
 }
 
-type HostFn = extern "C" fn(u32, *const OxVal, usize, *mut OxVal);
+pub(super) type HostFn = extern "C" fn(u32, *const OxVal, usize, *mut OxVal);
 type Hook0 = unsafe extern "C" fn() -> i32;
 type HookF = unsafe extern "C" fn(f64) -> i32;
 type HookS = unsafe extern "C" fn(*const u8, usize) -> i32;
@@ -394,6 +414,15 @@ impl OxRuntime {
         self.script_files().iter().map(|f| rebuild(&self.toolchain, &self.shared, f, &self.out_dir)).collect()
     }
 
+    /// True once some build of `script` (file stem) has been loaded.
+    pub fn is_loaded(&self, script: &str) -> bool {
+        self.shared.slot(script).get().is_some()
+    }
+
+    pub fn scripts_dir(&self) -> &Path {
+        &self.scripts_dir
+    }
+
     /// A new behavior instance for `script` (file stem). Valid even before the
     /// first successful build: it no-ops until a build lands.
     pub fn behavior(&self, script: &str) -> OxBehavior {
@@ -424,7 +453,7 @@ impl OxRuntime {
             }
         })
         .map_err(|e| e.to_string())?;
-        watcher.watch(&self.scripts_dir, RecursiveMode::Recursive).map_err(|e| e.to_string())?;
+        watcher.watch(&self.scripts_dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
         let (results_tx, results_rx) = channel();
         self.watch = Some(Watch {
             _watcher: watcher,

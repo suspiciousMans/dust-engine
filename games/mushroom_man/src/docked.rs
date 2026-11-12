@@ -1344,7 +1344,7 @@ mod tests {
         let mut world = World::new();
         let mut seen = HashSet::new();
         let mut m = meta("Door");
-        m.script_path = Some(PathBuf::from("scripts/door.pss"));
+        m.script_path = Some(PathBuf::from("scripts/door.ox"));
         let e = world.spawn((Transform::default(), m));
         let report = bridge(&mut world, &mut seen);
         assert_eq!(report.needs_script, vec![e]);

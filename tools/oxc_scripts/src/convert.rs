@@ -4,7 +4,9 @@
 //! ScriptApi calls, top-level `let` state). Top-level `let`s become engine-held
 //! per-entity variables (`get_var`/`set_var`), because `.ox` has no globals.
 //! Smoke-test driver scripts (`tick()` + press/release/finish) are rejected:
-//! they use a different host and stay `.pss` under the `legacy-pss` feature.
+//! they are not behaviors; port them by hand to an `.ox` `tick(frame, t)` script
+//! (see `games/*/scripts/smoke/*.ox` and `docs/SCRIPTING-OXIDIZED.md` §8).
+//! The engine no longer runs `.pss`; this tool only migrates old scripts.
 
 pub struct Converted {
     pub ox: String,
@@ -87,7 +89,7 @@ const HOOK_MAP: &[(&str, &str, &str)] = &[
 pub fn convert(src: &str, label: &str) -> Result<Converted, String> {
     let toks = lex(src);
     if toks.iter().any(|t| matches!(t, Tok::Ident(i) if i == "tick" || i == "finish" || i == "press")) {
-        return Err("smoke-test driver script (tick/press/finish) — not a behavior; keep as .pss (legacy-pss feature)".into());
+        return Err("smoke-test driver script (tick/press/finish) — not a behavior; port it by hand to an .ox `tick(frame: Int, t: Float)` smoke script".into());
     }
     let mut warnings = Vec::new();
 
@@ -323,7 +325,7 @@ fn tok_text(t: &Tok) -> String {
 mod tests {
     use super::*;
 
-    const BOB: &str = include_str!("../../../games/sandbox/scripts/bob_demo.pss");
+    const BOB: &str = include_str!("../tests/fixtures/bob_demo.pss");
 
     #[test]
     fn converts_bob_demo() {
@@ -339,7 +341,7 @@ mod tests {
 
     #[test]
     fn rejects_smoke_scripts() {
-        let s = include_str!("../../../games/sandbox/scripts/smoke/basic_playthrough.pss");
+        let s = include_str!("../tests/fixtures/basic_playthrough.pss");
         assert!(convert(s, "x.pss").is_err());
     }
 }

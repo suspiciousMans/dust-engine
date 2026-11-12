@@ -2,7 +2,7 @@
 name = "oxc_scripts"
 version = "0.1.0"
 edition = "2021"
-description = "Build step for Oxidized (.ox) game scripts, plus the .pss -> .ox converter"
+description = "Build step for Oxidized (.ox) game scripts, plus the one-way .pss -> .ox migration converter"
 
 # Deliberately dependency-free: shares the engine's compile-side sources by
 # path so building scripts never needs SDL2/GL.

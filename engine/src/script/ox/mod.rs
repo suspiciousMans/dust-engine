@@ -3,10 +3,14 @@
 
 pub mod api;
 pub mod build;
+pub mod host;
 pub mod runtime;
+pub mod smoke;
 
 pub use api::{BehaviorCtx, EntityState, HeadlessApi, InputSnapshot, OxApi, OxCommand, OxServices};
 pub use build::{ScriptDiagnostic, ScriptDiagnostics};
+pub use host::OxScripts;
+pub use smoke::SmokeDriver;
 pub use runtime::{LoadedScript, OxBehavior, OxRuntime, ReloadReport, ScriptSlot};
 
 #[cfg(test)]

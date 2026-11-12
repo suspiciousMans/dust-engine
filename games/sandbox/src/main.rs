@@ -10,7 +10,7 @@ use engine::ai::{AiEvent, CharacterBrain, CharacterMeta, Dialogue, DialogueNode,
 use engine::animation::{AnimationKind, Animator};
 use engine::app::{App, Context, Game};
 use engine::audio::AudioContext;
-use engine::behavior::{Behavior, BehaviorSlot, NativeBobBehavior, ScriptApi, ScriptBehavior};
+use engine::behavior::{Behavior, BehaviorSlot, NativeBobBehavior, ScriptApi};
 use engine::camera::{
     CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, SpeedFov,
     StrafeTilt,
@@ -18,6 +18,7 @@ use engine::camera::{
 use engine::class::ObjectClass;
 use engine::ecs::{euler_deg_to_quat, Entity, Light, LevelObjectMeta, LightKind, MeshRenderer, PlayerController, Transform, World};
 use engine::hotreload::HotReloadWatcher;
+use engine::script::ox::OxScripts;
 use engine::hud::HudState;
 use engine::screen_effect::{ScreenEffectSpec, ScreenEffectState};
 use engine::glam::{Mat3, Mat4, Quat, Vec3};
@@ -218,7 +219,7 @@ fn default_level() -> Level {
         }),
     };
 
-    // Bobs via `scripts/bob_demo.pss` — stands next to the compiled-in
+    // Bobs via `scripts/bob_demo.ox` — stands next to the compiled-in
     // "Native Behavior Cube" (see `spawn_native_behavior_demo`) so
     // interacting with both makes the script/Rust parity concrete.
     let script_demo_cube = LevelObject {
@@ -231,7 +232,7 @@ fn default_level() -> Level {
         is_dynamic: false,
         is_trigger: false,
         animation: None,
-        script: Some(PathBuf::from("scripts/bob_demo.pss")),
+        script: Some(PathBuf::from("scripts/bob_demo.ox")),
         class: None,
         level_transition: None,
         screen_effect: None,
@@ -452,7 +453,7 @@ fn write_wav(path: &Path, samples: &[i16], sample_rate: u32) -> anyhow::Result<(
 
 /// A short sine blip with a linear fade in/out (avoids an audible click at
 /// the start/end of a one-shot sound) — the placeholder played by
-/// `bob_demo.pss`'s `interact()` alongside its existing procedural `play_tone`.
+/// `bob_demo.ox`'s `interact()` alongside its existing procedural `play_tone`.
 fn generate_blip_samples(sample_rate: u32) -> Vec<i16> {
     let duration_secs = 0.15;
     let freq = 880.0;
@@ -661,23 +662,6 @@ impl ScriptApi for SandboxScriptApi<'_> {
 
     fn camera_shake(&mut self, intensity: f32, duration_secs: f32) {
         self.camera_shake.trigger(CameraShakeSpec { intensity, duration_secs });
-    }
-}
-
-/// Launches the standalone script editor (`tools/script_editor`) pointed at
-/// `path`, non-blocking. Dev-time convenience: assumes the sibling binary
-/// lives next to this one, true when both are built from the same
-/// workspace target directory — not something a shipped game needs.
-fn spawn_script_editor(path: &Path) {
-    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) else {
-        log::error!("could not determine the current executable's directory");
-        return;
-    };
-    let editor_name = if cfg!(windows) { "script_editor.exe" } else { "script_editor" };
-    let editor_path = exe_dir.join(editor_name);
-    match std::process::Command::new(&editor_path).arg(path).spawn() {
-        Ok(_) => log::info!("launched script editor for {path:?}"),
-        Err(err) => log::error!("failed to launch script editor at {editor_path:?} (is it built?): {err}"),
     }
 }
 
@@ -948,6 +932,10 @@ struct Sandbox {
     /// convention as `audio: Option<AudioContext>`) or in a shipped build
     /// (`init` only starts it when `editor_available()`).
     hot_reload: Option<HotReloadWatcher>,
+    /// Oxidized (`.ox`) script runtime, created on first script attach.
+    ox_scripts: Option<OxScripts>,
+    /// Set once `OxScripts::new` failed (no `oxidized`/`rustc`), so we log it once.
+    ox_unavailable: bool,
     /// editor panel: in-editor texture thumbnail browser, opened by a "Browse
     /// Texture..." button (alongside the existing OS-dialog "Assign
     /// Texture..." button, not replacing it) and `pending_texture_pick`
@@ -1219,6 +1207,8 @@ impl Sandbox {
             profiles: None,
             ui: None,
             hot_reload: None,
+            ox_scripts: None,
+            ox_unavailable: false,
             texture_asset_browser: engine::ui::AssetBrowserState::default(),
             pending_texture_pick: None,
             active_dialogue: None,
@@ -1329,6 +1319,39 @@ impl Sandbox {
         false
     }
 
+    /// The Oxidized runtime, created on first use so a game with no scripted
+    /// objects never needs the `oxidized` compiler. `None` (logged once) when
+    /// the toolchain can't be found.
+    fn ox_scripts(&mut self) -> Option<&mut OxScripts> {
+        if self.ox_scripts.is_none() && !self.ox_unavailable {
+            match OxScripts::new(&self.asset_root) {
+                Ok(scripts) => self.ox_scripts = Some(scripts),
+                Err(err) => {
+                    log::error!("scripting unavailable: {err}");
+                    self.ox_unavailable = true;
+                }
+            }
+        }
+        self.ox_scripts.as_mut()
+    }
+
+    /// Builds a `Behavior` for `entity` from the `.ox` script at the
+    /// asset-root-relative `path`. First use of a script compiles it (cached
+    /// on disk under `.ox-build`); build errors are logged with `file:line:col`
+    /// and the behavior still attaches, idle until a fixed save hot-swaps in.
+    fn make_script_behavior(&mut self, path: &Path, entity: Entity) -> Option<Box<dyn Behavior>> {
+        if !OxScripts::is_script_path(path) {
+            log::error!("unsupported script {path:?}: only Oxidized `.ox` scripts are supported (`.pss` was retired; see docs/SCRIPTING-OXIDIZED.md)");
+            return None;
+        }
+        let scripts = self.ox_scripts()?;
+        let (behavior, errors) = scripts.behavior(path, entity);
+        for error in errors {
+            log::error!("script error: {error}");
+        }
+        Some(behavior)
+    }
+
     /// (Re)compiles the script at `relative_path` and attaches it as
     /// `entity`'s `BehaviorSlot`, replacing any existing one — used by
     /// "Attach/Change Script...", "Reload", and after an inline "Save".
@@ -1336,24 +1359,10 @@ impl Sandbox {
     /// level is saved, and fires `on_ready` immediately so new logic takes
     /// effect live rather than waiting for the next hook call.
     fn attach_script_to_entity(&mut self, entity: Entity, relative_path: &Path) {
-        let full_path = self.asset_root.join(relative_path);
-        let source = match std::fs::read_to_string(&full_path) {
-            Ok(source) => source,
-            Err(err) => {
-                log::error!("failed to read script {full_path:?}: {err}");
-                return;
-            }
+        let Some(behavior) = self.make_script_behavior(relative_path, entity) else {
+            return;
         };
-        let behavior = match ScriptBehavior::from_source(&source) {
-            Ok(behavior) => behavior,
-            Err(errors) => {
-                for error in errors {
-                    log::error!("script error in {full_path:?}: {error}");
-                }
-                return;
-            }
-        };
-        let _ = self.world.insert_one(entity, BehaviorSlot(Box::new(behavior)));
+        let _ = self.world.insert_one(entity, BehaviorSlot(behavior));
         if let Ok(mut query) = self.world.query_one::<&mut LevelObjectMeta>(entity) {
             if let Some(meta) = query.get() {
                 meta.script_path = Some(relative_path.to_path_buf());
@@ -1377,9 +1386,9 @@ impl Sandbox {
     }
 
     /// Reacts to a `HotReloadWatcher::poll_events` result: reapplies the
-    /// current shader profile if one of its files changed, re-attaches any
-    /// live entity's script if its `.pss` file changed, and reloads any
-    /// live entity's texture if its image file changed.
+    /// current shader profile if one of its files changed, and reloads any
+    /// live entity's texture if its image file changed. (`.ox` scripts reload
+    /// through `OxScripts`' own watcher instead, see `update`.)
     fn handle_hot_reload(&mut self, ctx: &mut Context, changed_paths: &[PathBuf]) {
         let gl = ctx.gl();
 
@@ -1402,18 +1411,10 @@ impl Sandbox {
             }
         }
 
-        let scripted_entities: Vec<(Entity, PathBuf)> = self
-            .world
-            .query::<&LevelObjectMeta>()
-            .iter()
-            .filter_map(|(entity, meta)| meta.script_path.clone().map(|path| (entity, path)))
-            .collect();
-        for (entity, script_path) in scripted_entities {
-            if changed_paths.iter().any(|path| self.hot_reload_path_matches(&script_path, path)) {
-                log::info!("hot reload: reattaching script {script_path:?}");
-                self.attach_script_to_entity(entity, &script_path);
-            }
-        }
+        // `.ox` scripts hot-reload through `OxScripts`' own watcher (polled in
+        // `update`): the rebuild runs on a worker thread and live behaviors
+        // swap to the new build with their state intact, so nothing to
+        // re-attach here.
 
         let textured_entities: Vec<(Entity, PathBuf)> = self
             .world
@@ -1823,20 +1824,9 @@ impl Sandbox {
         }
 
         if let Some(script_path) = &obj.script {
-            let full_path = self.asset_root.join(script_path);
-            match std::fs::read_to_string(&full_path) {
-                Ok(source) => match ScriptBehavior::from_source(&source) {
-                    Ok(behavior) => {
-                        let _ = self.world.insert_one(entity, BehaviorSlot(Box::new(behavior)));
-                        self.with_behavior(entity, |behavior, api| behavior.on_ready(api));
-                    }
-                    Err(errors) => {
-                        for error in errors {
-                            log::error!("script error in {full_path:?}: {error}");
-                        }
-                    }
-                },
-                Err(err) => log::error!("failed to read script {full_path:?}: {err}"),
+            if let Some(behavior) = self.make_script_behavior(script_path, entity) {
+                let _ = self.world.insert_one(entity, BehaviorSlot(behavior));
+                self.with_behavior(entity, |behavior, api| behavior.on_ready(api));
             }
         }
 
@@ -4983,7 +4973,6 @@ impl Sandbox {
         let mut script_attach = false;
         let mut script_reload = false;
         let mut script_save_inline = false;
-        let mut script_open_editor = false;
         let mut script_inline_just_opened = false;
         let mut current_script_path: Option<PathBuf> = None;
 
@@ -5190,9 +5179,6 @@ impl Sandbox {
                                 script_save_inline = true;
                             }
                         }
-                        if ui.button("Open in Script Editor").clicked() {
-                            script_open_editor = true;
-                        }
                     }
 
                     ui.horizontal(|ui| {
@@ -5274,7 +5260,7 @@ impl Sandbox {
         }
         if script_attach {
             if let Some(picked) = rfd::FileDialog::new()
-                .add_filter("PS2 Script", &["pss"])
+                .add_filter("Oxidized script", &["ox"])
                 .set_directory(&self.asset_root)
                 .pick_file()
             {
@@ -5294,11 +5280,6 @@ impl Sandbox {
                     Ok(()) => self.attach_script_to_entity(entity, &path),
                     Err(err) => log::error!("failed to save script {full_path:?}: {err}"),
                 }
-            }
-        }
-        if script_open_editor {
-            if let Some(path) = &current_script_path {
-                spawn_script_editor(&self.asset_root.join(path));
             }
         }
         if assign_texture {
@@ -6471,7 +6452,7 @@ impl Sandbox {
             ));
             if ui.button("Attach Script...").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("PS2 Script", &["pss"])
+                    .add_filter("Oxidized script", &["ox"])
                     .set_directory(&self.asset_root)
                     .pick_file()
                 {
@@ -7177,6 +7158,23 @@ impl Game for Sandbox {
             self.handle_hot_reload(ctx, &hot_reload_changes);
         }
 
+        // Oxidized scripts: hand them this frame's input, report finished
+        // background rebuilds (live behaviors already swapped to the new
+        // build), and apply what hooks queued since last frame.
+        if let Some(scripts) = &self.ox_scripts {
+            scripts.begin_frame(&ctx.input);
+            for line in scripts.poll() {
+                if line.starts_with("script error") {
+                    log::error!("{line}");
+                } else {
+                    log::info!("{line}");
+                }
+            }
+            for command in scripts.apply_commands(&mut self.world) {
+                log::warn!("script command not supported by this game yet: {command:?}");
+            }
+        }
+
         // Network I/O is polled unconditionally, every frame, regardless of
         // `paused`/Edit-vs-Play — sockets never block (see `engine::net`),
         // and a paused game shouldn't stop noticing a dropped connection or
@@ -7249,6 +7247,11 @@ impl Game for Sandbox {
             let scripted: Vec<Entity> = self.world.query::<&BehaviorSlot>().iter().map(|(entity, _)| entity).collect();
             for entity in scripted {
                 self.with_behavior(entity, |behavior, api| behavior.on_update(api, dt));
+            }
+            if let Some(scripts) = &self.ox_scripts {
+                for command in scripts.apply_commands(&mut self.world) {
+                    log::warn!("script command not supported by this game yet: {command:?}");
+                }
             }
 
             // `nav_grid` is taken out (rather than borrowed) for the

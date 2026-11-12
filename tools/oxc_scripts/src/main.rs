@@ -71,8 +71,8 @@ fn cmd_build(args: &[String]) -> i32 {
     let mut failed = 0;
     for f in &files {
         let t = std::time::Instant::now();
-        match build_script(&tc, f, &out, &BuildOptions { opt_level, generation: 0 }) {
-            Ok(b) => println!("ok    {} -> {} [hooks: {}] ({:.1}s)", b.name, b.lib_path.display(), b.hooks.join(", "), t.elapsed().as_secs_f32()),
+        match build_script(&tc, f, &out, &BuildOptions { opt_level, ..Default::default() }) {
+            Ok(b) => println!("ok    {} -> {} [hooks: {}] ({:.1}s{})", b.name, b.lib_path.display(), b.hooks.join(", "), t.elapsed().as_secs_f32(), if b.cached { ", cached" } else { "" }),
             Err(d) => {
                 failed += 1;
                 println!("FAIL  {}", f.display());

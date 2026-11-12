@@ -206,6 +206,11 @@ impl Input {
         }
     }
 
+    /// Every key currently held.
+    pub fn keys_down(&self) -> impl Iterator<Item = Keycode> + '_ {
+        self.keys_down.iter().copied()
+    }
+
     /// Keys that went down this frame (for rebinding capture, see `input_map`).
     pub fn keys_just_pressed(&self) -> impl Iterator<Item = Keycode> + '_ {
         self.keys_pressed.iter().copied()

@@ -236,3 +236,111 @@ fn bench_spin_bob() {
     let per = t.elapsed().as_nanos() as f64 / n as f64;
     eprintln!("spin_bob on_update: {per:.0} ns/call ({n} calls, debug engine build, script opt-level=1)");
 }
+
+// ------------------------------------------------------------ smoke driver
+
+const SMOKE_SRC: &str = r#"
+fn tap(key: String) {
+    press(key)
+    release(key)
+}
+
+fn tick(frame: Int, t: Float) {
+    let phase = get_var("phase", 0.0)
+    if phase == 0.0 {
+        tap("F3")
+        set_var("phase", 1.0)
+        set_var("started", t)
+        log("entering phase " + str(1))
+    } else if phase == 1.0 {
+        if t - get_var("started", 0.0) > 0.5 {
+            press("W")
+            assert_true(frame > 1, "frame counter advances")
+            assert_eq(phase, 1.0, "phase is 1")
+            assert_eq_str("a", "a", "strings match")
+            finish(true)
+        }
+    }
+}
+"#;
+
+#[test]
+fn smoke_driver_injects_keys_tracks_state_and_finishes() {
+    let Some(tc) = toolchain() else { return };
+    let dir = scratch("smoke");
+    let file = dir.join("s.ox");
+    std::fs::write(&file, SMOKE_SRC).unwrap();
+
+    let mut d = SmokeDriver::load_with(&tc, &file, &dir.join("out")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!d.cached);
+    d.tick(0.0).unwrap();
+    let ev = d.drain_events();
+    assert_eq!(ev.len(), 2, "{ev:?}");
+    assert!(matches!(&ev[0], sdl2::event::Event::KeyDown { keycode: Some(sdl2::keyboard::Keycode::F3), .. }));
+    assert!(matches!(&ev[1], sdl2::event::Event::KeyUp { keycode: Some(sdl2::keyboard::Keycode::F3), .. }));
+    assert_eq!(d.result(), None);
+    assert_eq!(d.state().log_lines, vec!["entering phase 1"]);
+
+    d.tick(0.3).unwrap();
+    assert_eq!(d.result(), None, "phase 1 waits 0.5 s");
+    d.tick(0.7).unwrap();
+    assert_eq!(d.result(), Some(true), "{:?}", d.state().failures);
+    assert!(matches!(&d.drain_events()[..], [sdl2::event::Event::KeyDown { keycode: Some(sdl2::keyboard::Keycode::W), .. }]));
+    assert_eq!(d.frames(), 3);
+
+    // Second load of unchanged source is a cache hit (no oxidized/rustc run).
+    let again = SmokeDriver::load_with(&tc, &file, &dir.join("out")).unwrap();
+    assert!(again.cached);
+    assert!(again.build_time < Duration::from_secs(1), "{:?}", again.build_time);
+}
+
+#[test]
+fn smoke_assertion_failure_wins_over_finish_true() {
+    let Some(tc) = toolchain() else { return };
+    let dir = scratch("smokefail");
+    let file = dir.join("f.ox");
+    std::fs::write(
+        &file,
+        "fn tick(frame: Int, t: Float) {\n    assert_true(t > 5.0, \"too early\")\n    assert_eq(1.0, 2.0, \"nope\")\n    press(\"NoSuchKey\")\n    finish(true)\n}\n",
+    )
+    .unwrap();
+    let mut d = SmokeDriver::load_with(&tc, &file, &dir.join("out")).unwrap();
+    d.tick(1.0).unwrap();
+    assert_eq!(d.result(), Some(false));
+    let f = &d.state().failures;
+    assert_eq!(f.len(), 3, "{f:?}");
+    assert!(f[0].contains("too early") && f[1].contains("1 != 2") && f[2].contains("unknown key 'NoSuchKey'"), "{f:?}");
+    assert!(d.drain_events().is_empty());
+}
+
+#[test]
+fn smoke_script_without_tick_or_with_panic_is_reported() {
+    let Some(tc) = toolchain() else { return };
+    let dir = scratch("smokebad");
+    let no_tick = dir.join("n.ox");
+    std::fs::write(&no_tick, "fn other() {\n    log(\"x\")\n}\n").unwrap();
+    let e = SmokeDriver::load_with(&tc, &no_tick, &dir.join("out")).err().expect("must fail");
+    assert!(e.contains("must define `fn tick"), "{e}");
+
+    let boom = dir.join("b.ox");
+    std::fs::write(&boom, "fn tick(frame: Int, t: Float) {\n    assert(false, \"kaboom\")\n}\n").unwrap();
+    let mut d = SmokeDriver::load_with(&tc, &boom, &dir.join("out")).unwrap();
+    let err = d.tick(0.0).unwrap_err();
+    assert!(err.contains("kaboom"), "{err}");
+}
+
+#[test]
+fn behavior_build_cache_skips_the_compilers() {
+    let Some(tc) = toolchain() else { return };
+    let dir = scratch("cache");
+    let file = dir.join("c.ox");
+    std::fs::write(&file, "fn on_interact() {\n    log(\"hi\")\n}\n").unwrap();
+    let opts = build::BuildOptions::default();
+    let a = build::build_script(&tc, &file, &dir.join("out"), &opts).unwrap();
+    let b = build::build_script(&tc, &file, &dir.join("out"), &opts).unwrap();
+    assert!(!a.cached && b.cached);
+    assert_eq!(a.lib_path, b.lib_path);
+    std::fs::write(&file, "fn on_interact() {\n    log(\"changed\")\n}\n").unwrap();
+    let c = build::build_script(&tc, &file, &dir.join("out"), &opts).unwrap();
+    assert!(!c.cached && c.lib_path != a.lib_path);
+}

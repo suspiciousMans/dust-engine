@@ -145,7 +145,7 @@
             is_dynamic: false,
             is_trigger: false,
             animation: None,
-            script: Some("scripts/bob_demo.pss"),
+            script: Some("scripts/bob_demo.ox"),
             class: None,
             level_transition: None,
             screen_effect: None,

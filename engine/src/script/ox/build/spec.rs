@@ -46,6 +46,73 @@ inline pi() -> Float = std::f64::consts::PI
 inline tau() -> Float = std::f64::consts::TAU
 "#;
 
+/// The smoke-test driver surface (`engine::script::ox::smoke`): what a
+/// `tick(frame: Int, t: Float)` script may call. Same line format as [`SPEC`].
+/// `check_pass`/`check_fail`/`finish_with` are plumbing for the ox-level
+/// wrappers in [`SMOKE_PRELUDE`]: a `Bool` argument cannot cross into a native
+/// (oxidized wraps it in a `DynamicValue`), but an ox-defined `fn` accepts it.
+pub const SMOKE_SPEC: &str = r#"
+host log(msg: String)
+host time() -> Float
+host press(key: String)
+host release(key: String)
+host check_fail(msg: String)
+host finish_with(ok: Int)
+host assert_eq(a: Float, b: Float, msg: String)
+host assert_eq_str(a: String, b: String, msg: String)
+host get_var(name: String, default: Float) -> Float
+host set_var(name: String, value: Float)
+inline clamp(x: Float, lo: Float, hi: Float) -> Float = x.max(lo).min(hi)
+"#;
+
+/// Ox-source helpers prepended to `engine_api.ox` for the smoke profile.
+pub const SMOKE_PRELUDE: &str = r#"
+fn assert_true(cond: Bool, msg: String) {
+    if cond {
+    } else {
+        check_fail(msg)
+    }
+}
+
+fn finish(ok: Bool) {
+    if ok {
+        finish_with(1)
+    } else {
+        finish_with(0)
+    }
+}
+"#;
+
+/// Which script-facing API a script is compiled against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Profile {
+    /// Per-entity behavior hooks (`on_update`, ...) — [`SPEC`].
+    Behavior,
+    /// Smoke-test driver (`tick`) — [`SMOKE_SPEC`].
+    Smoke,
+}
+
+impl Profile {
+    pub fn spec(self) -> &'static str {
+        match self {
+            Profile::Behavior => SPEC,
+            Profile::Smoke => SMOKE_SPEC,
+        }
+    }
+    pub fn prelude(self) -> &'static str {
+        match self {
+            Profile::Behavior => "",
+            Profile::Smoke => SMOKE_PRELUDE,
+        }
+    }
+    pub fn tag(self) -> &'static str {
+        match self {
+            Profile::Behavior => "behavior",
+            Profile::Smoke => "smoke",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ty {
     Int,
@@ -94,9 +161,13 @@ pub struct Native {
 }
 
 pub fn natives() -> Vec<Native> {
+    natives_for(Profile::Behavior)
+}
+
+pub fn natives_for(profile: Profile) -> Vec<Native> {
     let mut out = Vec::new();
     let mut op = 0u32;
-    for line in SPEC.lines().map(str::trim).filter(|l| !l.is_empty()) {
+    for line in profile.spec().lines().map(str::trim).filter(|l| !l.is_empty()) {
         let (kind, rest) = line.split_once(' ').expect("SPEC line");
         let (sig, body) = match rest.split_once(" = ") {
             Some((s, b)) => (s, Some(b.trim().to_string())),
@@ -137,8 +208,13 @@ pub fn natives() -> Vec<Native> {
 
 /// FNV-1a of the spec text; baked into every shim and checked at load.
 pub fn api_hash() -> u64 {
+    api_hash_for(Profile::Behavior)
+}
+
+pub fn api_hash_for(profile: Profile) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in SPEC.bytes().chain(SHIM_PRELUDE.bytes()) {
+    let tag = if profile == Profile::Behavior { "" } else { profile.tag() };
+    for b in profile.spec().bytes().chain(profile.prelude().bytes()).chain(SHIM_PRELUDE.bytes()).chain(tag.bytes()) {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
@@ -147,12 +223,17 @@ pub fn api_hash() -> u64 {
 
 /// `engine_api.ox`: the `fn native` declarations every script imports.
 pub fn api_ox() -> String {
+    api_ox_for(Profile::Behavior)
+}
+
+pub fn api_ox_for(profile: Profile) -> String {
     let mut s = String::from("# GENERATED from engine/src/script/ox/build/spec.rs — do not edit.\n");
-    for n in natives() {
+    for n in natives_for(profile) {
         let params: Vec<String> = n.params.iter().map(|(p, t)| format!("{p}: {}", t.ox())).collect();
         let ret = n.ret.map(|t| format!(" -> {}", t.ox())).unwrap_or_default();
         s.push_str(&format!("fn native {}({}){};\n", n.name, params.join(", "), ret));
     }
+    s.push_str(profile.prelude());
     s
 }
 
@@ -203,8 +284,12 @@ fn guarded(f: impl FnOnce() + std::panic::UnwindSafe) -> i32 {
 
 /// Generates the `__oxidized_natives` module text for a shim.
 pub fn shim_natives_rs() -> String {
+    shim_natives_rs_for(Profile::Behavior)
+}
+
+pub fn shim_natives_rs_for(profile: Profile) -> String {
     let mut s = String::from("pub mod __oxidized_natives {\n    use super::*;\n");
-    for n in natives() {
+    for n in natives_for(profile) {
         let params: Vec<String> = n.params.iter().map(|(p, t)| format!("{p}: {}", t.rust())).collect();
         let ret = n.ret.map(|t| format!(" -> {}", t.rust())).unwrap_or_default();
         if let Some(body) = &n.inline_body {
@@ -246,6 +331,16 @@ mod tests {
         assert!(n.iter().any(|x| x.name == "sin" && x.inline_body.is_some()));
         let host_ops = n.iter().filter(|x| x.inline_body.is_none()).count();
         assert_eq!(n.iter().filter(|x| x.op != u32::MAX).count(), host_ops);
+    }
+
+    #[test]
+    fn smoke_profile_is_separate() {
+        let n = natives_for(Profile::Smoke);
+        assert!(n.iter().any(|x| x.name == "press"));
+        assert!(!natives().iter().any(|x| x.name == "press"));
+        assert_ne!(api_hash(), api_hash_for(Profile::Smoke));
+        assert!(api_ox_for(Profile::Smoke).contains("fn assert_true(cond: Bool, msg: String)"));
+        assert!(!api_ox().contains("assert_true"));
     }
 
     #[test]
