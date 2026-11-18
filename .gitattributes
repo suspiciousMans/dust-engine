@@ -1,0 +1,4 @@
+# The shader-hash test pins exact bytes; keep LF on Windows checkouts.
+*.vert text eol=lf
+*.frag text eol=lf
+*.glsl text eol=lf
