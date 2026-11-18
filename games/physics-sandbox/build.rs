@@ -23,20 +23,24 @@ fn main() {
         let exe = std::env::var("OXIDIZED").unwrap_or_else(|_| "oxidized".into());
 
         println!("cargo:rerun-if-changed={}", entry.display());
-        let out = Command::new(&exe)
-            .arg("build")
-            .arg(&entry)
-            .arg("-o")
-            .arg(&rs_path)
-            .output()
-            .unwrap_or_else(|e| panic!("failed to run `{exe}` on {}: {e}", entry.display()));
-
-        if !out.status.success() {
-            panic!(
+        let generated_copy = scripts.join("generated").join(format!("{stem}.rs"));
+        match Command::new(&exe).arg("build").arg(&entry).arg("-o").arg(&rs_path).output() {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => panic!(
                 "oxidized failed on {}:\n{}",
                 entry.display(),
                 String::from_utf8_lossy(&out.stderr)
-            );
+            ),
+            // No compiler on this machine (e.g. CI): use the checked-in output.
+            // Regenerate with `oxidized build scripts/<name>.ox -o scripts/generated/<name>.rs`.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                println!("cargo:warning=`{exe}` not found; using {}", generated_copy.display());
+                println!("cargo:rerun-if-changed={}", generated_copy.display());
+                std::fs::copy(&generated_copy, &rs_path).unwrap_or_else(|e| {
+                    panic!("`{exe}` not found and no {}: {e}", generated_copy.display())
+                });
+            }
+            Err(e) => panic!("failed to run `{exe}` on {}: {e}", entry.display()),
         }
 
         let code = std::fs::read_to_string(&rs_path)
