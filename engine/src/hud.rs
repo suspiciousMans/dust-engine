@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-/// Visual styling for `engine::ui::hud::draw_hud`'s overlay — bundled into
-/// `engine::profile::RenderParams` (and thus a `ShaderProfile`) so a game's
+/// Visual styling for `dust_engine::ui::hud::draw_hud`'s overlay — bundled into
+/// `dust_engine::profile::RenderParams` (and thus a `ShaderProfile`) so a game's
 /// HUD look is saved/loaded/cycled the same way as its render settings,
 /// editable live via the F1 panel's "HUD" section
-/// (`engine::ui::panels::hud_style_editor`). Kept separate from `HudState`
+/// (`dust_engine::ui::panels::hud_style_editor`). Kept separate from `HudState`
 /// itself: this is authored "look" data, `HudState` is live per-frame
 /// content (title/bars/toasts), the same split `RenderParams` (look) vs.
 /// the ECS scene (content) already draws elsewhere.

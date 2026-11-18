@@ -27,9 +27,9 @@
 //! advances: `frame += 1`, `elapsed += dt`.
 //!
 //! ```
-//! use engine::ecs::Transform;
-//! use engine::effects::Lifetime;
-//! use engine::headless::{Headless, HeadlessInput};
+//! use dust_engine::ecs::Transform;
+//! use dust_engine::effects::Lifetime;
+//! use dust_engine::headless::{Headless, HeadlessInput};
 //!
 //! let mut h = Headless::with_default_systems();
 //! h.set_dt(0.25); // powers of two keep the f32 sums exact
@@ -536,7 +536,7 @@ fn bits4(q: Quat) -> [u32; 4] {
 /// effects all stand still, as in the real editor).
 ///
 /// ```
-/// use engine::headless::EditorHeadless;
+/// use dust_engine::headless::EditorHeadless;
 /// use glam::Vec3;
 ///
 /// let mut ed = EditorHeadless::new();

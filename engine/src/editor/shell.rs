@@ -1117,7 +1117,7 @@ mod tests {
 
     #[test]
     fn save_and_load_dir_restores_everything() {
-        let dir = std::env::temp_dir().join(format!("jame_shell_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dust_shell_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut s = EditorShell::new(vec![]);
         s.apply_preset(LayoutPreset::Minimal);
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn scene_files_via_shell_report_to_console() {
-        let dir = std::env::temp_dir().join(format!("jame_shellio_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dust_shellio_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("s.ron");
         let mut shell = EditorShell::new(vec![]);

@@ -36,7 +36,7 @@ impl EguiState {
 
     /// Registers an already-uploaded GL texture with egui's painter so it
     /// can be drawn via `egui::Image`/`ImageButton` — used by
-    /// `engine::ui::asset_browser` for thumbnails. Must be called outside
+    /// `dust_engine::ui::asset_browser` for thumbnails. Must be called outside
     /// `run`'s closure (the painter is exclusively borrowed for its
     /// duration); see that module's doc comment. The registered texture is
     /// never freed (`egui_glow::Painter::free_texture` would also delete

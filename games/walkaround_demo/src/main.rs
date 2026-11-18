@@ -6,42 +6,42 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use engine::ai::{AiEvent, CharacterBrain, CharacterMeta, Dialogue, DialogueNode, Disposition, Health, SpawnerConfig, SpawnerState};
-use engine::animation::{AnimationKind, Animator};
-use engine::app::{App, Context, Game};
-use engine::audio::AudioContext;
-use engine::behavior::{Behavior, BehaviorSlot, NativeBobBehavior, ScriptApi};
-use engine::camera::{
+use dust_engine::ai::{AiEvent, CharacterBrain, CharacterMeta, Dialogue, DialogueNode, Disposition, Health, SpawnerConfig, SpawnerState};
+use dust_engine::animation::{AnimationKind, Animator};
+use dust_engine::app::{App, Context, Game};
+use dust_engine::audio::AudioContext;
+use dust_engine::behavior::{Behavior, BehaviorSlot, NativeBobBehavior, ScriptApi};
+use dust_engine::camera::{
     CameraShakeSpec, CameraShakeState, FirstPersonCamera, HeadBob, LandingDip, SpeedFov,
     StrafeTilt,
 };
-use engine::class::ObjectClass;
-use engine::ecs::{euler_deg_to_quat, Entity, Light, LevelObjectMeta, LightKind, MeshRenderer, PlayerController, Transform, World};
-use engine::hotreload::HotReloadWatcher;
-use engine::script::ox::OxScripts;
-use engine::hud::HudState;
-use engine::screen_effect::{ScreenEffectSpec, ScreenEffectState};
-use engine::glam::{Mat3, Mat4, Quat, Vec3};
-use engine::glow::{self, HasContext};
-use engine::level::{AnimationSpec, CharacterInstance, Level, LevelLight, LevelObject, LevelParticleEmitter, LevelTransition, MeshSource, PrimitiveKind, RigInstance, SpawnerInstance};
-use engine::rig::{Keyframe, JointTrack, Rig, RigAnimator, RigAsset, RigClip, RigPart, RigPartDef};
-use engine::save::SaveData;
-use engine::mesh::{load_gltf, load_obj, primitives, GpuMesh, MeshData};
-use engine::net::{
+use dust_engine::class::ObjectClass;
+use dust_engine::ecs::{euler_deg_to_quat, Entity, Light, LevelObjectMeta, LightKind, MeshRenderer, PlayerController, Transform, World};
+use dust_engine::hotreload::HotReloadWatcher;
+use dust_engine::script::ox::OxScripts;
+use dust_engine::hud::HudState;
+use dust_engine::screen_effect::{ScreenEffectSpec, ScreenEffectState};
+use dust_engine::glam::{Mat3, Mat4, Quat, Vec3};
+use dust_engine::glow::{self, HasContext};
+use dust_engine::level::{AnimationSpec, CharacterInstance, Level, LevelLight, LevelObject, LevelParticleEmitter, LevelTransition, MeshSource, PrimitiveKind, RigInstance, SpawnerInstance};
+use dust_engine::rig::{Keyframe, JointTrack, Rig, RigAnimator, RigAsset, RigClip, RigPart, RigPartDef};
+use dust_engine::save::SaveData;
+use dust_engine::mesh::{load_gltf, load_obj, primitives, GpuMesh, MeshData};
+use dust_engine::net::{
     spawn_ring_offset, CharacterSnapshot, InputState, NetClient, NetHost, NetId, ObjectSnapshot, PlayerSnapshot,
     ServerMessage,
 };
-use engine::particles::{ParticleEmitter, ParticleEmitterDef};
-use engine::pathfinding::NavGrid;
-use engine::physics::{Collider, ColliderShape, PhysicsParams, RigidBody};
-use engine::profile::{LightingMode, ProfileCycler, RenderParams, ShaderProfile, TextureFilterMode};
-use engine::renderer::{PostParams, Renderer};
-use engine::sdl2::controller::Button as ControllerButton;
-use engine::sdl2::event::Event;
-use engine::sdl2::keyboard::Keycode;
-use engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
-use engine::texture::{GpuTexture, TextureFilter};
-use engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
+use dust_engine::particles::{ParticleEmitter, ParticleEmitterDef};
+use dust_engine::pathfinding::NavGrid;
+use dust_engine::physics::{Collider, ColliderShape, PhysicsParams, RigidBody};
+use dust_engine::profile::{LightingMode, ProfileCycler, RenderParams, ShaderProfile, TextureFilterMode};
+use dust_engine::renderer::{PostParams, Renderer};
+use dust_engine::sdl2::controller::Button as ControllerButton;
+use dust_engine::sdl2::event::Event;
+use dust_engine::sdl2::keyboard::Keycode;
+use dust_engine::shader::{ShaderVariantCache, AFFINE_UV_BIT};
+use dust_engine::texture::{GpuTexture, TextureFilter};
+use dust_engine::ui::{draw_hud, draw_pause_menu, hud_style_editor, render_params_editor, EguiState, PauseMenuAction};
 use docked::PlayActions;
 
 mod docked;
@@ -698,7 +698,7 @@ struct RigRoot {
     rig_path: PathBuf,
 }
 
-/// Tags an entity spawned from an `engine::class::ObjectClass` so
+/// Tags an entity spawned from an `dust_engine::class::ObjectClass` so
 /// "Apply to All Instances" can find every member of a class, and so
 /// `build_level_from_ecs` can write `LevelObject::class` back out.
 #[derive(Clone)]
@@ -711,7 +711,7 @@ struct ClassMember {
 /// characters, dynamic props. Static level geometry never gets one: it's
 /// already fully described by the `Level` sent in `Welcome`/
 /// `LevelTransition`, which `apply_level` reconstructs identically on
-/// every peer (see `engine::net`'s "Entity replication model").
+/// every peer (see `dust_engine::net`'s "Entity replication model").
 struct Networked(NetId);
 
 /// Tags a host-side entity representing a connected client's avatar —
@@ -766,7 +766,7 @@ struct Sandbox {
     /// Texture..." button (alongside the existing OS-dialog "Assign
     /// Texture..." button, not replacing it) and `pending_texture_pick`
     /// tracking which entity/class it was opened for.
-    texture_asset_browser: engine::ui::AssetBrowserState,
+    texture_asset_browser: dust_engine::ui::AssetBrowserState,
     pending_texture_pick: Option<PendingTexturePick>,
     /// Play mode: set by `interact()` when the character just spoken to has
     /// a choice pending on their current dialogue node — while set, a
@@ -806,7 +806,7 @@ struct Sandbox {
     /// The FOV `speed_fov`'s kick is added on top of each frame.
     base_fov_radians: f32,
     /// Camera dip-and-recover spring, kicked by `land()` (see the landing-
-    /// detection check around `engine::physics::step` in `Game::update`).
+    /// detection check around `dust_engine::physics::step` in `Game::update`).
     landing_dip: LandingDip,
     /// `RigidBody::grounded` as of last frame — compared against this
     /// frame's value (after `physics::step`) to detect the exact frame the
@@ -838,7 +838,7 @@ struct Sandbox {
     selected_rig: Option<Entity>,
     selected_rig_part: Option<Entity>,
     /// Baked from static level geometry in `apply_level` — `None` only
-    /// before the first level ever loads. Used by `engine::ai::step` for
+    /// before the first level ever loads. Used by `dust_engine::ai::step` for
     /// character pathfinding.
     nav_grid: Option<NavGrid>,
     /// editor panel: the currently selected character entity, mirroring
@@ -903,7 +903,7 @@ struct Sandbox {
     /// `set_music_volume` every time music (re)starts.
     music_volume: f32,
     /// Which side of a listen-server session this instance is playing,
-    /// if any — see `engine::net`. `Offline` is the default (unchanged
+    /// if any — see `dust_engine::net`. `Offline` is the default (unchanged
     /// single-player behavior).
     net_mode: NetMode,
     /// Client-side: maps a replicated entity's host-assigned `NetId` to
@@ -988,7 +988,7 @@ struct Sandbox {
 }
 
 /// Which side of a listen-server multiplayer session `Sandbox` is
-/// currently playing, if any — see the `engine::net` module for the
+/// currently playing, if any — see the `dust_engine::net` module for the
 /// underlying transport. `Host`/`Client` wrap the connection state;
 /// `Offline` (the default) is unchanged single-player behavior.
 enum NetMode {
@@ -1024,7 +1024,7 @@ impl Sandbox {
             hot_reload: None,
             ox_scripts: None,
             ox_unavailable: false,
-            texture_asset_browser: engine::ui::AssetBrowserState::default(),
+            texture_asset_browser: dust_engine::ui::AssetBrowserState::default(),
             pending_texture_pick: None,
             active_dialogue: None,
             save_as_name: String::from("custom"),
@@ -1081,7 +1081,7 @@ impl Sandbox {
             remote_players: HashMap::new(),
             remote_player_rig_parts: HashMap::new(),
             local_appearance: None,
-            net_join_address: format!("127.0.0.1:{}", engine::net::DEFAULT_PORT),
+            net_join_address: format!("127.0.0.1:{}", dust_engine::net::DEFAULT_PORT),
             net_player_name: String::from("Player"),
             net_removed: Vec::new(),
             net_dialogue: None,
@@ -1296,7 +1296,7 @@ impl Sandbox {
         if let Some(cycler) = self.profiles.as_ref() {
             let profile = cycler.current();
             let path = self.profiles_dir.join(format!("{}.ron", profile.name));
-            match engine::profile::save_to_file(profile, &path) {
+            match dust_engine::profile::save_to_file(profile, &path) {
                 Ok(()) => log::info!("saved profile '{}' to {path:?}", profile.name),
                 Err(err) => log::error!("failed to save profile '{}': {err}", profile.name),
             }
@@ -1318,7 +1318,7 @@ impl Sandbox {
             render: self.render_params,
         };
         let path = self.profiles_dir.join(format!("{}.ron", profile.name));
-        match engine::profile::save_to_file(&profile, &path) {
+        match dust_engine::profile::save_to_file(&profile, &path) {
             Ok(()) => {
                 log::info!("saved new profile '{}' to {path:?}", profile.name);
                 if let Some(cycler) = self.profiles.as_mut() {
@@ -1754,7 +1754,7 @@ impl Sandbox {
     /// `rigs/my_character.ron`) into a loaded `RigAsset` — checking
     /// `self.rigs` first (`find_rig_asset`, matched by file stem, same as
     /// a level-placed `RigInstance` does), then falling back to a fresh
-    /// disk load via `engine::rig::load_from_file`, since a peer may
+    /// disk load via `dust_engine::rig::load_from_file`, since a peer may
     /// receive a `NetId`'s appearance path over the network before ever
     /// loading that specific rig file itself this session (e.g. the file
     /// was imported by another peer after this process started). A
@@ -1766,7 +1766,7 @@ impl Sandbox {
         if let Some(existing) = self.find_rig_asset(rig_path) {
             return Some(existing.clone());
         }
-        match engine::rig::load_from_file(&self.asset_root.join(rig_path)) {
+        match dust_engine::rig::load_from_file(&self.asset_root.join(rig_path)) {
             Ok(asset) => {
                 self.rigs.push(asset.clone());
                 Some(asset)
@@ -1781,7 +1781,7 @@ impl Sandbox {
     /// Spawns just the visual rig-part entities for a networked player's
     /// chosen appearance, parented (via `spawn_rig_parts_and_wire`) to
     /// `attach_to` — the player's physics/network root — so
-    /// `engine::rig::update_world_transforms` inherits that entity's
+    /// `dust_engine::rig::update_world_transforms` inherits that entity's
     /// `Transform` every frame no matter how it's driven (physics
     /// integration host-side, `NetTarget` smoothing client-side; see that
     /// function's plain-`Transform`-parent fallback). No `Rig`/
@@ -2138,7 +2138,7 @@ impl Sandbox {
     /// left unwired — `spawn_rig_instance` fills it in once every part in
     /// the rig exists) + `RigPartMeta` (so the part can be serialized back
     /// out later). The initial `Transform` is just a reasonable placeholder;
-    /// `engine::rig::update_world_transforms` overwrites it the very next
+    /// `dust_engine::rig::update_world_transforms` overwrites it the very next
     /// frame regardless.
     fn spawn_rig_part(&mut self, gl: &glow::Context, def: &RigPartDef) -> anyhow::Result<Entity> {
         let mesh = self.resolve_mesh(gl, &def.mesh)?;
@@ -2155,7 +2155,7 @@ impl Sandbox {
             },
             MeshRenderer { mesh, texture: Some(texture) },
             RigPart { parent: None, local_position, local_rotation_euler_deg, local_rotation },
-            engine::rig::RigPartMeta { mesh_source: def.mesh.clone(), texture_path: def.texture_path.clone() },
+            dust_engine::rig::RigPartMeta { mesh_source: def.mesh.clone(), texture_path: def.texture_path.clone() },
         ));
         Ok(entity)
     }
@@ -2169,7 +2169,7 @@ impl Sandbox {
     /// with `parent: None`) is wired to `root_parent_override` instead of
     /// staying parentless — for a level prop that's still `None` (a root's
     /// local pose *is* its world pose, unchanged from before this was
-    /// factored out); for a player it lets `engine::rig::update_world_transforms`
+    /// factored out); for a player it lets `dust_engine::rig::update_world_transforms`
     /// inherit the physics/network root's plain `Transform` every frame
     /// (see that function's fallback for non-`RigPart` parents).
     ///
@@ -2280,7 +2280,7 @@ impl Sandbox {
         let mut parts = Vec::new();
         for (part_name, &entity) in &rig.parts_by_name {
             let Ok(rig_part) = self.world.get::<&RigPart>(entity) else { continue };
-            let Ok(meta) = self.world.get::<&engine::rig::RigPartMeta>(entity) else { continue };
+            let Ok(meta) = self.world.get::<&dust_engine::rig::RigPartMeta>(entity) else { continue };
             let Ok(transform) = self.world.get::<&Transform>(entity) else { continue };
             parts.push(RigPartDef {
                 name: part_name.clone(),
@@ -2492,7 +2492,7 @@ impl Sandbox {
     fn save_current_level(&mut self) {
         let level = self.build_level_from_ecs();
         let path = self.levels_dir.join(format!("{}.ron", level.name));
-        match engine::level::save_to_file(&level, &path) {
+        match dust_engine::level::save_to_file(&level, &path) {
             Ok(()) => {
                 log::info!("saved level '{}' to {path:?}", level.name);
                 if let Some(existing) = self.levels.iter_mut().find(|l| l.name == level.name) {
@@ -2512,7 +2512,7 @@ impl Sandbox {
         let mut level = self.build_level_from_ecs();
         level.name = name.to_string();
         let path = self.levels_dir.join(format!("{}.ron", level.name));
-        match engine::level::save_to_file(&level, &path) {
+        match dust_engine::level::save_to_file(&level, &path) {
             Ok(()) => {
                 log::info!("saved new level '{}' to {path:?}", level.name);
                 self.current_level_name = level.name.clone();
@@ -2643,7 +2643,7 @@ impl Sandbox {
             .add_filter("Images", &["png", "jpg", "jpeg"])
             .set_directory(&self.asset_root)
             .pick_file();
-        let mut texture_path = texture_path.map(|path| engine::level::relativize(&path, &self.asset_root));
+        let mut texture_path = texture_path.map(|path| dust_engine::level::relativize(&path, &self.asset_root));
 
         let name = model_path
             .file_stem()
@@ -2652,9 +2652,9 @@ impl Sandbox {
         let count = self.world.query::<&LevelObjectMeta>().iter().count();
 
         let mesh = if is_gltf {
-            MeshSource::GltfFile(engine::level::relativize(&model_path, &self.asset_root))
+            MeshSource::GltfFile(dust_engine::level::relativize(&model_path, &self.asset_root))
         } else {
-            MeshSource::ObjFile(engine::level::relativize(&model_path, &self.asset_root))
+            MeshSource::ObjFile(dust_engine::level::relativize(&model_path, &self.asset_root))
         };
 
         // A glTF's own embedded/referenced base-color texture is a
@@ -2669,8 +2669,8 @@ impl Sandbox {
                         match std::fs::create_dir_all(&textures_dir) {
                             Ok(()) => {
                                 let out_path = textures_dir.join(format!("{name}_basecolor.png"));
-                                match engine::texture::save_rgba8_png(&out_path, &image.rgba, image.width, image.height) {
-                                    Ok(()) => texture_path = Some(engine::level::relativize(&out_path, &self.asset_root)),
+                                match dust_engine::texture::save_rgba8_png(&out_path, &image.rgba, image.width, image.height) {
+                                    Ok(()) => texture_path = Some(dust_engine::level::relativize(&out_path, &self.asset_root)),
                                     Err(err) => log::error!("failed to write extracted glTF texture: {err}"),
                                 }
                             }
@@ -2720,7 +2720,7 @@ impl Sandbox {
         else {
             return;
         };
-        self.current_music_path = Some(engine::level::relativize(&path, &self.asset_root));
+        self.current_music_path = Some(dust_engine::level::relativize(&path, &self.asset_root));
         let volume = self.music_volume;
         if let Some(audio) = self.audio.as_mut() {
             match audio.play_music_file(&path, true) {
@@ -2754,7 +2754,7 @@ impl Sandbox {
             }
         };
 
-        let relative_path = engine::level::relativize(&path, &self.asset_root);
+        let relative_path = dust_engine::level::relativize(&path, &self.asset_root);
         if let Ok(mut query) = self.world.query_one::<(&mut MeshRenderer, &mut LevelObjectMeta)>(entity) {
             if let Some((renderer, meta)) = query.get() {
                 renderer.texture = Some(texture);
@@ -2781,7 +2781,7 @@ impl Sandbox {
             }
         };
 
-        let relative_path = engine::level::relativize(&path, &self.asset_root);
+        let relative_path = dust_engine::level::relativize(&path, &self.asset_root);
         if let Ok(mut query) = self.world.query_one::<(&mut MeshRenderer, &mut CharacterMeta)>(entity) {
             if let Some((renderer, meta)) = query.get() {
                 renderer.texture = Some(texture);
@@ -2885,7 +2885,7 @@ impl Sandbox {
         }
         match &self.net_mode {
             NetMode::Offline => "Offline".to_string(),
-            NetMode::Host(host) => format!("Hosting ({}/{})", host.player_count(), engine::net::MAX_PLAYERS),
+            NetMode::Host(host) => format!("Hosting ({}/{})", host.player_count(), dust_engine::net::MAX_PLAYERS),
             NetMode::Client(client) if client.is_connected() => {
                 format!("Connected to {}", self.net_join_address)
             }
@@ -2895,9 +2895,9 @@ impl Sandbox {
 
     /// Multiplayer panel's "Host Game" button.
     fn start_hosting(&mut self) {
-        match NetHost::bind(engine::net::DEFAULT_PORT) {
+        match NetHost::bind(dust_engine::net::DEFAULT_PORT) {
             Ok(mut host) => {
-                log::info!("hosting on port {}", engine::net::DEFAULT_PORT);
+                log::info!("hosting on port {}", dust_engine::net::DEFAULT_PORT);
                 // The multiplayer panel only appears while already in Play
                 // mode (paused), so `player_entity` is guaranteed to exist
                 // here — tag it so it shows up in the (future) snapshot
@@ -3005,7 +3005,7 @@ impl Sandbox {
     }
 
     /// Pumps whichever side of a listen-server session is active, every
-    /// frame, regardless of pause state — see `engine::net`'s "never
+    /// frame, regardless of pause state — see `dust_engine::net`'s "never
     /// blocks" framing contract. This pass handles the connection
     /// lifecycle (accept/handshake/disconnect) plus the join bootstrap
     /// (spawning a remote player's avatar, sending/receiving `Welcome`);
@@ -3082,7 +3082,7 @@ impl Sandbox {
                                     your_net_id: net_id,
                                     level,
                                     named_net_ids,
-                                    tick_rate: engine::net::SNAPSHOT_RATE_HZ,
+                                    tick_rate: dust_engine::net::SNAPSHOT_RATE_HZ,
                                 },
                             );
                             // Catch the new client up on everyone already in
@@ -3290,7 +3290,7 @@ impl Sandbox {
                         .query::<(&Transform, &Networked, &PlayerController, Option<&Health>)>()
                         .iter()
                     {
-                        let (yaw, _, _) = transform.rotation.to_euler(engine::glam::EulerRot::YXZ);
+                        let (yaw, _, _) = transform.rotation.to_euler(dust_engine::glam::EulerRot::YXZ);
                         players.push(PlayerSnapshot {
                             net_id: networked.0,
                             position: transform.position.to_array(),
@@ -3623,7 +3623,7 @@ impl Sandbox {
             extra: std::collections::HashMap::new(),
         };
         let path = self.checkpoint_path();
-        match engine::save::save_to_file(&data, &path) {
+        match dust_engine::save::save_to_file(&data, &path) {
             Ok(()) => {
                 log::info!("checkpoint saved to {path:?}");
                 self.hud.show_toast("Checkpoint saved", 1.5);
@@ -3639,7 +3639,7 @@ impl Sandbox {
     /// checkpoint this simple, just logged as a heads-up.
     fn load_checkpoint(&mut self, ctx: &mut Context) {
         let path = self.checkpoint_path();
-        let data = match engine::save::load_from_file(&path) {
+        let data = match dust_engine::save::load_from_file(&path) {
             Ok(data) => data,
             Err(err) => {
                 log::warn!("F10: no checkpoint to load ({err})");
@@ -3972,7 +3972,7 @@ impl Sandbox {
         // only player-facing damage source in this vertical slice, reusing
         // the interact key rather than adding a dedicated attack input.
         // Actual death handling (despawn/particles/tone) happens next frame
-        // via `engine::ai::step`'s `AiEvent::CharacterDied`, the same path
+        // via `dust_engine::ai::step`'s `AiEvent::CharacterDied`, the same path
         // a character's own attacks use to notice the player died.
         const PLAYER_ATTACK_DAMAGE: f32 = 10.0;
         let is_hostile = self
@@ -4090,7 +4090,7 @@ impl Sandbox {
     /// Spawns a transient, self-cleaning burst of particles at `position` —
     /// no `LevelObjectMeta` (so it never shows up in Scene Objects or gets
     /// saved as level data) and no mesh/texture of its own, just a
-    /// `ParticleEmitter` that `engine::particles::step` despawns once every
+    /// `ParticleEmitter` that `dust_engine::particles::step` despawns once every
     /// particle it made has aged out (see `Game::update`). Ties particles +
     /// physics + the `interact` hook together, the same demo spirit as the
     /// jump/push tones.
@@ -4987,7 +4987,7 @@ impl Sandbox {
                 .set_directory(&self.asset_root)
                 .pick_file()
             {
-                let relative = engine::level::relativize(&picked, &self.asset_root);
+                let relative = dust_engine::level::relativize(&picked, &self.asset_root);
                 self.attach_script_to_entity(entity, &relative);
             }
         }
@@ -5477,7 +5477,7 @@ impl Sandbox {
             clips: Vec::new(),
         };
         let path = self.rigs_dir.join(format!("{name}.ron"));
-        if let Err(err) = engine::rig::save_to_file(&asset, &path) {
+        if let Err(err) = dust_engine::rig::save_to_file(&asset, &path) {
             log::error!("failed to save new rig '{name}': {err}");
             return;
         }
@@ -5492,7 +5492,7 @@ impl Sandbox {
     /// `MeshSource::GltfNode` addressing that specific node so parts
     /// don't collide the way `MeshSource::GltfFile`'s "first node only"
     /// convention would). No clips are generated — see
-    /// `engine::mesh::load_gltf`'s doc comment for why animation import is
+    /// `dust_engine::mesh::load_gltf`'s doc comment for why animation import is
     /// out of scope. The new rig is saved to `rigs/` and pushed onto
     /// `self.rigs`, but — unlike `import_gltf_as_rig` — nothing is placed
     /// in the level; this is shared by that level-prop importer (which
@@ -5524,7 +5524,7 @@ impl Sandbox {
             log::warn!("a rig named '{rig_name}' already exists; pick a differently-named glTF file or delete the existing rig first");
             return None;
         }
-        let relative_gltf_path = engine::level::relativize(&path, &self.asset_root);
+        let relative_gltf_path = dust_engine::level::relativize(&path, &self.asset_root);
         let textures_dir = self.asset_root.join("textures");
         if let Err(err) = std::fs::create_dir_all(&textures_dir) {
             log::error!("failed to create textures dir: {err}");
@@ -5536,8 +5536,8 @@ impl Sandbox {
             .map(|entry| {
                 let texture_path = entry.image.as_ref().and_then(|image| {
                     let out_path = textures_dir.join(format!("{rig_name}_{}.png", entry.name));
-                    match engine::texture::save_rgba8_png(&out_path, &image.rgba, image.width, image.height) {
-                        Ok(()) => Some(engine::level::relativize(&out_path, &self.asset_root)),
+                    match dust_engine::texture::save_rgba8_png(&out_path, &image.rgba, image.width, image.height) {
+                        Ok(()) => Some(dust_engine::level::relativize(&out_path, &self.asset_root)),
                         Err(err) => {
                             log::error!("failed to write extracted glTF texture for part '{}': {err}", entry.name);
                             None
@@ -5558,7 +5558,7 @@ impl Sandbox {
 
         let asset = RigAsset { name: rig_name.clone(), parts, clips: Vec::new() };
         let rig_path = self.rigs_dir.join(format!("{rig_name}.ron"));
-        if let Err(err) = engine::rig::save_to_file(&asset, &rig_path) {
+        if let Err(err) = dust_engine::rig::save_to_file(&asset, &rig_path) {
             log::error!("failed to save imported rig '{rig_name}': {err}");
             return None;
         }
@@ -5945,7 +5945,7 @@ impl Sandbox {
         if save_rig {
             if let Some(asset) = self.build_rig_asset_from_ecs(root, asset_name) {
                 let path = self.rigs_dir.join(format!("{}.ron", asset.name));
-                match engine::rig::save_to_file(&asset, &path) {
+                match dust_engine::rig::save_to_file(&asset, &path) {
                     Ok(()) => {
                         log::info!("saved rig '{}' to {path:?}", asset.name);
                         match self.rigs.iter_mut().find(|rig| rig.name == asset.name) {
@@ -5995,7 +5995,7 @@ impl Sandbox {
             script: None,
         };
         let path = self.classes_dir.join(format!("{name}.ron"));
-        if let Err(err) = engine::class::save_to_file(&class, &path) {
+        if let Err(err) = dust_engine::class::save_to_file(&class, &path) {
             log::error!("failed to save new class '{name}': {err}");
             return;
         }
@@ -6039,7 +6039,7 @@ impl Sandbox {
         else {
             return;
         };
-        let relative_path = engine::level::relativize(&path, &self.asset_root);
+        let relative_path = dust_engine::level::relativize(&path, &self.asset_root);
         if let Some(class) = self.classes.get_mut(index) {
             class.texture_path = Some(relative_path);
         }
@@ -6232,7 +6232,7 @@ impl Sandbox {
                     .set_directory(&self.asset_root)
                     .pick_file()
                 {
-                    class.script = Some(engine::level::relativize(&path, &self.asset_root));
+                    class.script = Some(dust_engine::level::relativize(&path, &self.asset_root));
                 }
             }
             if class.script.is_some() && ui.button("Clear Script").clicked() {
@@ -6255,7 +6255,7 @@ impl Sandbox {
         if save_class {
             if let Some(class) = self.classes.get(index) {
                 let path = self.classes_dir.join(format!("{}.ron", class.name));
-                match engine::class::save_to_file(class, &path) {
+                match dust_engine::class::save_to_file(class, &path) {
                     Ok(()) => log::info!("saved class '{}' to {path:?}", class.name),
                     Err(err) => log::error!("failed to save class '{}': {err}", class.name),
                 }
@@ -6637,7 +6637,7 @@ impl Game for Sandbox {
         }
 
         std::fs::create_dir_all(&self.profiles_dir)?;
-        let mut profiles = engine::profile::load_dir(&self.profiles_dir)?;
+        let mut profiles = dust_engine::profile::load_dir(&self.profiles_dir)?;
         if profiles.is_empty() {
             log::info!(
                 "no shader profiles found in {:?}; writing default demo profiles",
@@ -6646,7 +6646,7 @@ impl Game for Sandbox {
             profiles = default_demo_profiles();
             for profile in &profiles {
                 let path = self.profiles_dir.join(format!("{}.ron", profile.name));
-                engine::profile::save_to_file(profile, &path)?;
+                dust_engine::profile::save_to_file(profile, &path)?;
             }
         }
 
@@ -6662,23 +6662,23 @@ impl Game for Sandbox {
         self.ui = Some(EguiState::new(ctx.gl_arc())?);
 
         std::fs::create_dir_all(&self.rigs_dir)?;
-        let mut rigs = engine::rig::load_dir(&self.rigs_dir)?;
+        let mut rigs = dust_engine::rig::load_dir(&self.rigs_dir)?;
         if rigs.is_empty() {
             log::info!("no rigs found in {:?}; writing default demo rig", self.rigs_dir);
             let rig = default_rig_asset();
             let path = self.rigs_dir.join(format!("{}.ron", rig.name));
-            engine::rig::save_to_file(&rig, &path)?;
+            dust_engine::rig::save_to_file(&rig, &path)?;
             rigs = vec![rig];
         }
         self.rigs = rigs;
 
         std::fs::create_dir_all(&self.classes_dir)?;
-        let mut classes = engine::class::load_dir(&self.classes_dir)?;
+        let mut classes = dust_engine::class::load_dir(&self.classes_dir)?;
         if classes.is_empty() {
             log::info!("no object classes found in {:?}; writing default demo class", self.classes_dir);
             let class = default_barrel_class();
             let path = self.classes_dir.join(format!("{}.ron", class.name));
-            engine::class::save_to_file(&class, &path)?;
+            dust_engine::class::save_to_file(&class, &path)?;
             classes = vec![class];
         }
         self.classes = classes;
@@ -6709,7 +6709,7 @@ impl Game for Sandbox {
         }
 
         std::fs::create_dir_all(&self.levels_dir)?;
-        let mut levels = engine::level::load_dir(&self.levels_dir)?;
+        let mut levels = dust_engine::level::load_dir(&self.levels_dir)?;
         if levels.is_empty() {
             log::info!(
                 "no levels found in {:?}; writing default level",
@@ -6717,14 +6717,14 @@ impl Game for Sandbox {
             );
             let level = default_level();
             let path = self.levels_dir.join(format!("{}.ron", level.name));
-            engine::level::save_to_file(&level, &path)?;
+            dust_engine::level::save_to_file(&level, &path)?;
             levels = vec![level];
         }
         if !levels.iter().any(|l| l.name == "second_room") {
             log::info!("no 'second_room' level found in {:?}; writing it", self.levels_dir);
             let level = second_room_level();
             let path = self.levels_dir.join(format!("{}.ron", level.name));
-            engine::level::save_to_file(&level, &path)?;
+            dust_engine::level::save_to_file(&level, &path)?;
             levels.push(level);
         }
         let first_level = levels[0].clone();
@@ -6867,7 +6867,7 @@ impl Game for Sandbox {
         }
 
         // Network I/O is polled unconditionally, every frame, regardless of
-        // `paused`/Edit-vs-Play — sockets never block (see `engine::net`),
+        // `paused`/Edit-vs-Play — sockets never block (see `dust_engine::net`),
         // and a paused game shouldn't stop noticing a dropped connection or
         // a newly-joined player.
         self.update_networking(ctx, dt);
@@ -6880,19 +6880,19 @@ impl Game for Sandbox {
         // the pause menu.
         let paused_in_play = self.mode == EditorMode::Play && self.paused;
         if !paused_in_play {
-            engine::animation::step(&mut self.world, dt);
+            dust_engine::animation::step(&mut self.world, dt);
             // Sample playing rig clips into each part's local rotation, then
             // resolve every rig part's world `Transform` from its parent
             // chain — same "always on, live preview" philosophy, and order
             // matters: a clip sampled this frame should be reflected in this
             // frame's rendered pose, not lag one frame behind.
-            engine::rig::step_rig_animation(&mut self.world, dt);
-            engine::rig::update_world_transforms(&mut self.world);
+            dust_engine::rig::step_rig_animation(&mut self.world, dt);
+            dust_engine::rig::update_world_transforms(&mut self.world);
             // Transient one-shot burst emitters (see `spawn_burst_at`)
             // despawn themselves once every particle they made has aged out
             // — they aren't level data, so nothing else would ever clean
             // them up.
-            for entity in engine::particles::step(&mut self.world, dt) {
+            for entity in dust_engine::particles::step(&mut self.world, dt) {
                 let _ = self.world.despawn(entity);
             }
             self.hud.tick(dt);
@@ -6947,7 +6947,7 @@ impl Game for Sandbox {
             if let Some(nav_grid) = self.nav_grid.take() {
                 // Every player currently in the session — the host's own
                 // local player plus every connected remote player's
-                // avatar (see `engine::net`) — so hostile/passive AI
+                // avatar (see `dust_engine::net`) — so hostile/passive AI
                 // reacts to whichever one is actually nearest instead of
                 // being blind to everyone but the host.
                 let player_positions: Vec<(Entity, Vec3)> = self
@@ -6956,7 +6956,7 @@ impl Game for Sandbox {
                     .chain(self.remote_players.values())
                     .filter_map(|&entity| self.world.get::<&Transform>(entity).ok().map(|t| (entity, t.position)))
                     .collect();
-                let events = engine::ai::step(&mut self.world, dt, &player_positions, &nav_grid);
+                let events = dust_engine::ai::step(&mut self.world, dt, &player_positions, &nav_grid);
                 self.nav_grid = Some(nav_grid);
 
                 for event in events {
@@ -7034,9 +7034,9 @@ impl Game for Sandbox {
 
             // Spawners don't need `nav_grid`, so they tick independently of
             // the block above — a request only carries a `CharacterInstance`
-            // (no `gl` access inside `engine::ai`, mirroring why `ai::step`
+            // (no `gl` access inside `dust_engine::ai`, mirroring why `ai::step`
             // itself returns events instead of spawning/despawning directly).
-            let spawn_requests = engine::ai::step_spawners(&mut self.world, dt);
+            let spawn_requests = dust_engine::ai::step_spawners(&mut self.world, dt);
             if !spawn_requests.is_empty() {
                 let gl = ctx.gl();
                 for request in spawn_requests {
@@ -7074,7 +7074,7 @@ impl Game for Sandbox {
                 .map(|body| body.velocity.y)
                 .unwrap_or(0.0);
 
-            let overlaps = engine::physics::step(&mut self.world, dt, &self.physics_params);
+            let overlaps = dust_engine::physics::step(&mut self.world, dt, &self.physics_params);
 
             let Some(player) = self.player_entity else {
                 return Ok(());
@@ -7167,7 +7167,7 @@ impl Game for Sandbox {
             self.frame_times.pop_front();
         }
         let avg_frame_time = self.frame_times.iter().sum::<f32>() / self.frame_times.len().max(1) as f32;
-        let profiler_stats = engine::ui::ProfilerStats {
+        let profiler_stats = dust_engine::ui::ProfilerStats {
             fps: if avg_frame_time > 0.0 { 1.0 / avg_frame_time } else { 0.0 },
             frame_time_ms: avg_frame_time * 1000.0,
             entity_count: self.world.len() as usize,
@@ -7184,7 +7184,7 @@ impl Game for Sandbox {
         let mut play_actions = PlayActions::default();
         let full_output = ui_state.run(drawable_size, |egui_ctx| {
             if profiler_visible {
-                engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
+                dust_engine::ui::draw_profiler_overlay(egui_ctx, &profiler_stats);
             }
             if editor_available() && !playing {
                 egui::Area::new("dock_closed_hint".into())
@@ -7269,7 +7269,7 @@ fn show_fatal_error_dialog(message: &str) {
     #[cfg(not(debug_assertions))]
     {
         rfd::MessageDialog::new()
-            .set_title("Jame Engine walkaround_demo - Error")
+            .set_title("Dust Engine walkaround_demo - Error")
             .set_description(message)
             .set_level(rfd::MessageLevel::Error)
             .show();
@@ -7281,7 +7281,7 @@ fn show_fatal_error_dialog(message: &str) {
 }
 
 /// `--smoke-test <path>` runs an Oxidized `.ox` script (`tick(frame, t)`) driving the game
-/// instead of a human (see `engine::app::App::run_scripted`), exiting with
+/// instead of a human (see `dust_engine::app::App::run_scripted`), exiting with
 /// the script's pass/fail code — CI-friendly (recommend
 /// `SDL_VIDEODRIVER=dummy`, since there's no headless mode). Any other
 /// argument shape falls through to the normal interactive `App::run`.
@@ -7304,7 +7304,7 @@ fn main() -> anyhow::Result<()> {
     }));
 
     if let Some(script_path) = smoke_test_path_from_args() {
-        let script = match engine::script::ox::SmokeDriver::load(&script_path) {
+        let script = match dust_engine::script::ox::SmokeDriver::load(&script_path) {
             Ok(script) => script,
             Err(err) => {
                 log::error!("smoke test script {script_path:?}: {err}");
@@ -7317,11 +7317,11 @@ fn main() -> anyhow::Result<()> {
             script.build_time.as_secs_f32(),
             if script.cached { " (cached)" } else { "" }
         );
-        let code = App::run_scripted("Jame Engine walkaround_demo", 1280, 720, Sandbox::new(), script)?;
+        let code = App::run_scripted("Dust Engine walkaround_demo", 1280, 720, Sandbox::new(), script)?;
         std::process::exit(code);
     }
 
-    let result = App::run("Jame Engine walkaround_demo", 1280, 720, Sandbox::new());
+    let result = App::run("Dust Engine walkaround_demo", 1280, 720, Sandbox::new());
     if let Err(err) = &result {
         log::error!("fatal error: {err:?}");
         show_fatal_error_dialog(&format!("{err:?}"));

@@ -19,7 +19,7 @@
 //!   `Pair{negative,positive}` (1D), `Composite{up,down,left,right}` (WASD-style vec2)
 //!   and `Stick{x,y,deadzone,invert_y}` (radial deadzone vec2).
 //! * [`ActionState`] — resolved **once per frame**: `state.resolve(&map, &input)` where
-//!   `input` is any [`InputSource`] (`engine::input::Input` and
+//!   `input` is any [`InputSource`] (`dust_engine::input::Input` and
 //!   `headless::HeadlessInput` implement it). Query `pressed / just_pressed /
 //!   just_released / axis / vec2` by action name; unknown actions read as idle.
 //! * Contexts (layers): actions carry an optional `context`. Toggle with

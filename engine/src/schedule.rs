@@ -24,9 +24,9 @@
 //! `schedule.run(..)` from its own `update`, migrating one feature at a time.
 //!
 //! ```
-//! use engine::ecs::World;
-//! use engine::resources::Resources;
-//! use engine::schedule::{Schedule, Stage, SystemCtx};
+//! use dust_engine::ecs::World;
+//! use dust_engine::resources::Resources;
+//! use dust_engine::schedule::{Schedule, Stage, SystemCtx};
 //!
 //! struct Ticks(u32);
 //! #[derive(Clone, Copy, PartialEq)]

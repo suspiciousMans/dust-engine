@@ -18,7 +18,7 @@ pub struct GltfImage {
 
 /// One glTF node that carries a mesh — the unit both import paths (single
 /// object, and rig) build from. `parent_name` mirrors
-/// `engine::rig::RigPartDef::parent`: `None` for a node with no parent
+/// `dust_engine::rig::RigPartDef::parent`: `None` for a node with no parent
 /// (or whose parent has no mesh-relevant name), `Some(name)` otherwise —
 /// glTF's node hierarchy maps directly onto the rig system's named-parent
 /// rigid-part hierarchy.
@@ -41,7 +41,7 @@ pub struct GltfScene {
 /// Deliberately out of scope (static pose only, logged where relevant):
 /// **vertex skinning** — the engine has no per-vertex bone-weight
 /// attribute or joint-matrix shader support, only rigid-part hierarchies
-/// (see `engine::rig`) — and **animation-channel import** — `RigClip`'s
+/// (see `dust_engine::rig`) — and **animation-channel import** — `RigClip`'s
 /// `Keyframe` is rotation-only, glTF's TRS animation channels are richer.
 /// A skinned/animated source file still imports fine, just at its bind
 /// pose with no animation data carried over. For skins and animations use

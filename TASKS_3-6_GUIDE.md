@@ -1,10 +1,10 @@
 > **Historical note.** Written for the early egui dock skeleton (`engine/src/ui/dock_skeleton.rs`). The editor has since been rebuilt as `engine/src/editor/` (`EditorRuntime`); see GUIDE.md "The docked editor" and docs/KNOWN-ISSUES.md for current state. The paths below are from a machine that no longer applies.
 
-# jame-engine UI redesign — Tasks 3–6 Implementation Notes
+# dust-engine UI redesign — Tasks 3–6 Implementation Notes
 
 **Status:** Tasks 0–2 ✅ complete and committed. This document guides Tasks 3–6.
 
-**Repo state:** `/home/_l/Downloads/jame-engine-src/jame-engine-master/`, branch `master`, commit `a0f303c`.
+**Repo state:** `/home/_l/Downloads/dust-engine-src/dust-engine-master/`, branch `master`, commit `a0f303c`.
 
 ---
 
@@ -49,7 +49,7 @@
 2. Implement `draw_scene_hierarchy()` in `panels.rs`
 3. Implement `draw_inspector()` in `panels.rs`
 4. Wire both into `EditorDocks::draw_dock_shell()` or call from sandbox's render loop
-5. Test: `cargo test -p engine test_scene_inspector -- --nocapture`
+5. Test: `cargo test -p dust_engine test_scene_inspector -- --nocapture`
 
 **Critical APIs:**
 - `hecs::World::iter()` for entity iteration
@@ -84,7 +84,7 @@
 2. Implement asset tree rendering
 3. Implement Output panel + log filtering
 4. Wire profiler as a tab
-5. Test: `cargo test -p engine test_asset_browser -- --nocapture`
+5. Test: `cargo test -p dust_engine test_asset_browser -- --nocapture`
 
 **Critical APIs:**
 - `std::fs::read_dir()` for directory iteration
@@ -130,15 +130,15 @@
 ## Build/test workflow for next session
 
 ```bash
-cd /home/_l/Downloads/jame-engine-src/jame-engine-master
+cd /home/_l/Downloads/dust-engine-src/dust-engine-master
 
 # After implementing Task 3:
-cargo test -p engine test_scene_inspector -- --nocapture
-cargo check -p engine
+cargo test -p dust_engine test_scene_inspector -- --nocapture
+cargo check -p dust_engine
 
 # After implementing Task 4:
-cargo test -p engine test_asset_browser -- --nocapture
-cargo check -p engine
+cargo test -p dust_engine test_asset_browser -- --nocapture
+cargo check -p dust_engine
 
 # After wiring into sandbox (Task 5):
 # (sandbox binary test — currently can't run due to SDL2 bundled build issue;
@@ -154,7 +154,7 @@ git add -A && git commit -m "feat(ui): <task description>"
 
 **SDL2 bundled build fails on some systems.** 
 - Root cause: CMake configuration for bundled SDL2 requires native build tools.
-- Workaround: `cargo check -p engine` works (checks without linking). Full `cargo build` will fail.
+- Workaround: `cargo check -p dust_engine` works (checks without linking). Full `cargo build` will fail.
 - Solution: Either install SDL2 dev headers on the system, or skip the bundled feature and link to system SDL2.
 - **Impact for this work:** We can develop and test the UI code (which is egui + panels, not graphics), but can't run the full sandbox binary to verify the editor visually. Integration test via `cargo test` is sufficient for now.
 
@@ -163,7 +163,7 @@ git add -A && git commit -m "feat(ui): <task description>"
 ## Repo structure reference
 
 ```
-/home/_l/Downloads/jame-engine-src/jame-engine-master/
+/home/_l/Downloads/dust-engine-src/dust-engine-master/
 ├── Cargo.toml                          (root workspace)
 ├── engine/
 │   ├── Cargo.toml
@@ -198,7 +198,7 @@ git add -A && git commit -m "feat(ui): <task description>"
 
 1. Read this file.
 2. Verify repo state: `git log --oneline -3` should show theme + dock_skeleton commits.
-3. Run `cargo check -p engine` — should succeed.
+3. Run `cargo check -p dust_engine` — should succeed.
 4. Start with Task 3: write `test_scene_inspector.rs`, then implement `draw_scene_hierarchy()` + `draw_inspector()`.
 5. Test and commit after each task.
 

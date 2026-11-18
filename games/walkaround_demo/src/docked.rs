@@ -1,4 +1,4 @@
-//! The editor: the engine's dock (`engine::editor::runtime::EditorRuntime` with
+//! The editor: the engine's dock (`dust_engine::editor::runtime::EditorRuntime` with
 //! Hierarchy, Inspector, Viewport with gizmos, Assets, Console, ...). F1, F2 and
 //! F4 (or `DUST_EDITOR=1` at launch) open it; F4 closes it again.
 //!
@@ -14,13 +14,13 @@
 
 use super::*;
 
-use engine::editor::bounds::{Aabb, LocalBounds};
-use engine::editor::runtime::EditorRuntime;
-use engine::editor::scene_io::{NullSnapshot, SceneIo};
-use engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
-use engine::editor::interaction::ViewportEvent;
-use engine::editor::{EditorMode as ShellMode, Locked, Name, Registry, Selection};
-use engine::ui::{AppearanceAction, EditorTab, MultiplayerAction};
+use dust_engine::editor::bounds::{Aabb, LocalBounds};
+use dust_engine::editor::runtime::EditorRuntime;
+use dust_engine::editor::scene_io::{NullSnapshot, SceneIo};
+use dust_engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
+use dust_engine::editor::interaction::ViewportEvent;
+use dust_engine::editor::{EditorMode as ShellMode, Locked, Name, Registry, Selection};
+use dust_engine::ui::{AppearanceAction, EditorTab, MultiplayerAction};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -101,7 +101,7 @@ impl SceneIo for GameSceneIo {
 
     fn open(&mut self, path: &Path, _: &mut World) -> Result<(), String> {
         let path = self.resolve(path);
-        let level = engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        let level = dust_engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
         self.shared.borrow_mut().ops.push(IoOp::Open(level, path.clone()));
         self.current = Some(path);
         Ok(())
@@ -181,7 +181,7 @@ struct DockHost<'a> {
     pause_ui: PauseUi,
     actions: PlayActions,
     picked_texture: Option<PathBuf>,
-    profiler: engine::ui::ProfilerStats,
+    profiler: dust_engine::ui::ProfilerStats,
 }
 
 impl ShellHost for DockHost<'_> {
@@ -203,7 +203,7 @@ impl ShellHost for DockHost<'_> {
         let window = ctx.screen_rect();
         ctx.input_mut(|i| i.screen_rect = viewport);
         if self.game.profiler_visible {
-            engine::ui::draw_profiler_overlay(ctx, &self.profiler);
+            dust_engine::ui::draw_profiler_overlay(ctx, &self.profiler);
         }
         if self.game.mode == EditorMode::Play {
             self.game.draw_play_overlay(ctx, viewport, &self.pause_ui, &mut self.actions);
@@ -346,7 +346,7 @@ impl Sandbox {
             log::info!("docked editor opened");
         }
         // Thumbnails are registered per egui context; the other mode's ids are stale.
-        self.texture_asset_browser = engine::ui::AssetBrowserState::default();
+        self.texture_asset_browser = dust_engine::ui::AssetBrowserState::default();
         self.pending_texture_pick = None;
     }
 
@@ -491,7 +491,7 @@ impl Sandbox {
         let name = path.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).ok_or("invalid level file name")?;
         let mut level = self.build_level_from_ecs();
         level.name = name.to_string();
-        engine::level::save_to_file(&level, path).map_err(|e| format!("save {}: {e}", path.display()))?;
+        dust_engine::level::save_to_file(&level, path).map_err(|e| format!("save {}: {e}", path.display()))?;
         log::info!("saved level '{name}' to {path:?}");
         self.current_level_name = level.name.clone();
         self.cache_level(level);
@@ -584,7 +584,7 @@ impl Sandbox {
         // The shell gets the real world; the host swaps it into `self.world` per call.
         let mut world = std::mem::take(&mut self.world);
         let pause_ui = self.pause_ui_inputs();
-        let profiler = engine::ui::ProfilerStats {
+        let profiler = dust_engine::ui::ProfilerStats {
             fps: perf.fps,
             frame_time_ms: perf.frame_ms,
             entity_count: perf.entities,
@@ -679,7 +679,7 @@ impl Sandbox {
     /// The pause menu and its multiplayer / appearance side panels.
     pub(crate) fn draw_pause_overlays(&mut self, ctx: &egui::Context, ui_in: &PauseUi, out: &mut PlayActions) {
         out.pause = draw_pause_menu(ctx, editor_available());
-        out.multiplayer = engine::ui::draw_multiplayer_panel(
+        out.multiplayer = dust_engine::ui::draw_multiplayer_panel(
             ctx,
             &ui_in.net_status,
             ui_in.net_connected,
@@ -688,7 +688,7 @@ impl Sandbox {
             &mut self.net_player_name,
             &ui_in.net_players,
         );
-        out.appearance = engine::ui::draw_appearance_panel(ctx, ui_in.current_appearance.as_deref(), &ui_in.rig_names);
+        out.appearance = dust_engine::ui::draw_appearance_panel(ctx, ui_in.current_appearance.as_deref(), &ui_in.rig_names);
     }
 
     fn draw_play_overlay(&mut self, ctx: &egui::Context, viewport: egui::Rect, pause_ui: &PauseUi, out: &mut PlayActions) {
@@ -1063,7 +1063,7 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::editor::EditorState;
+    use dust_engine::editor::EditorState;
 
     fn meta(name: &str) -> LevelObjectMeta {
         LevelObjectMeta {
@@ -1257,7 +1257,7 @@ mod tests {
         assert_eq!(scene_io.current_path(), Some(dir.join("room.ron").as_path()), "relative names land in levels/");
         assert!(scene_io.save(&world, Path::new("")).is_err(), "no file stem, no save");
 
-        engine::level::save_to_file(&Level { name: "room".into(), ..Level::default() }, &dir.join("room.ron")).unwrap();
+        dust_engine::level::save_to_file(&Level { name: "room".into(), ..Level::default() }, &dir.join("room.ron")).unwrap();
         scene_io.open(Path::new("room.ron"), &mut world).unwrap();
         assert!(scene_io.open(Path::new("missing.ron"), &mut world).is_err());
         scene_io.new_scene(&mut world).unwrap();
@@ -1284,7 +1284,7 @@ mod tests {
         g.world.spawn((t, meta("Crate")));
         let path = dir.join("my_room.ron");
         g.io_save(&path).unwrap();
-        let saved = engine::level::load_from_file(&path).unwrap();
+        let saved = dust_engine::level::load_from_file(&path).unwrap();
         assert_eq!(saved.name, "my_room");
         assert_eq!(saved.objects.len(), 1);
         assert_eq!(saved.objects[0].position, [1.0, 2.0, 3.0]);

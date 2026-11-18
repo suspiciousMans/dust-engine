@@ -84,7 +84,7 @@ pub struct PostParams {
     pub dither_strength: f32,
     /// A full-screen color tint (e.g. a damage flash), mixed in before the
     /// posterize/dither stage so it still reads as native to the retro look
-    /// rather than a crisp overlay. See `engine::screen_effect`.
+    /// rather than a crisp overlay. See `dust_engine::screen_effect`.
     pub tint_color: [f32; 3],
     pub tint_strength: f32,
 }

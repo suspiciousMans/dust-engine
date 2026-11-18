@@ -9,7 +9,7 @@ use crate::ecs::Transform;
 use crate::level::MeshSource;
 
 // --- Serializable asset data (its own `rigs/*.ron` files, same pattern as
-// `engine::profile`'s ShaderProfile) ---
+// `dust_engine::profile`'s ShaderProfile) ---
 
 /// One rigid segment of a segmented ("PS2-style") character rig: a mesh
 /// parented to another part via a fixed local offset — no per-vertex skin
@@ -49,7 +49,7 @@ pub struct RigClip {
 }
 
 /// A reusable character definition: its part hierarchy plus every clip
-/// authored for it. Placed in a level via `engine::level::RigInstance`.
+/// authored for it. Placed in a level via `dust_engine::level::RigInstance`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RigAsset {
     pub name: String,
@@ -290,7 +290,7 @@ pub fn step_rig_animation(world: &mut hecs::World, dt: f32) {
 /// so a straightforward memoized recursive resolve is plenty fast — no need
 /// for a topologically-sorted update order. Runs unconditionally every
 /// frame (both Edit and Play mode), the same "live preview" philosophy as
-/// `engine::animation::step`.
+/// `dust_engine::animation::step`.
 pub fn update_world_transforms(world: &mut hecs::World) {
     let snapshot: Vec<(Entity, Option<Entity>, Vec3, Quat)> = world
         .query::<&RigPart>()

@@ -166,7 +166,7 @@ impl App {
     /// still works), then the script's `tick(frame, t)` is called once. `tick`
     /// is the driver: it decides what to do this frame by calling the smoke
     /// natives (`press`/`release`/`assert_true`/`assert_eq`/`finish`/`log`, see
-    /// `engine::script::ox::smoke`). Key presses it queues are then fed through
+    /// `dust_engine::script::ox::smoke`). Key presses it queues are then fed through
     /// the same `ctx.input.handle_event` + `game.handle_event` path a real
     /// keypress would take, before the normal `update`/`render` for the frame
     /// runs. The run ends — and this function returns `Ok(0)` (pass) or

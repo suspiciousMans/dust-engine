@@ -7,7 +7,7 @@ use crate::ecs::Transform;
 /// Everything about a burst/stream of particles except *where* it is
 /// (that's the entity's `Transform::position`, read once per spawned
 /// particle) — a plain data shape, savable as part of a level via
-/// `engine::level::LevelParticleEmitter`.
+/// `dust_engine::level::LevelParticleEmitter`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ParticleEmitterDef {
     /// Particles spawned per second for a continuous emitter. `0.0` means
@@ -147,7 +147,7 @@ impl ParticleEmitter {
 /// Ages/culls every emitter's particles, integrates survivors (gravity +
 /// linear motion), and auto-emits for continuous (`rate_per_sec > 0`)
 /// emitters. Runs unconditionally every frame (Edit and Play mode) — the
-/// same "always-on live preview" philosophy as `engine::animation::step`.
+/// same "always-on live preview" philosophy as `dust_engine::animation::step`.
 ///
 /// Returns every entity whose emitter is a **spent one-shot burst**
 /// (`rate_per_sec <= 0` and no particles left) — transient burst emitters

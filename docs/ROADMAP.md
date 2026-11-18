@@ -1,6 +1,6 @@
-# Jame Engine roadmap
+# Dust Engine roadmap
 
-Goal: make games on Jame faster to build and safer to change. The pressure
+Goal: make games on Dust faster to build and safer to change. The pressure
 comes from Dreamscape, the largest game on the engine (~34k lines, an 8k-line
 `main.rs`, one `DreamscapeGame` struct holding most state). Each phase below
 ships on its own and is judged by a concrete game change it makes smaller.
@@ -38,7 +38,7 @@ phase is "done" by the roadmap's own rule.
 | # | Phase | Engine side | Still open | Status |
 |---|---|---|---|---|
 | 0 | Reconcile the fork | Audit written, Dreamscape superset merged, audio split into `audio/{native,web}.rs` | 0.3 Dreamscape on this repo as a dependency; 0.4 `nn_viz`, `dungeon_oxide`; 0.5 downstream-game CI job | Partial |
-| 1 | Effect primitives | `engine::effects`: `Lifetime`, `Fade`, `TextureOverride`, `tick`; unit-tested | 1.4 port dash ghosts/bursts/STILLNESS/PHASE; `MeshRenderer` has no alpha so `Fade` alpha is not rendered | Partial (engine done, no consumer) |
+| 1 | Effect primitives | `dust_engine::effects`: `Lifetime`, `Fade`, `TextureOverride`, `tick`; unit-tested | 1.4 port dash ghosts/bursts/STILLNESS/PHASE; `MeshRenderer` has no alpha so `Fade` alpha is not rendered | Partial (engine done, no consumer) |
 | 2 | Audio buses | `AudioEngine` named tracks, gain/fade/mute, shared loop clock, `AudioBackend` trait, `NullBackend` for tests | 2.4 port adaptive music; web backend never built; games must call `audio.update()` | Partial (engine done, no consumer) |
 | 3 | Systems and scheduling | `Schedule` (stages, before/after, run conditions, cycle errors) and `Resources` | 3.4 run three Dreamscape features as registered systems; split `main.rs`; no bundled game runs a `Schedule` | Partial (engine done, no consumer) |
 | 4 | Headless test harness | `Headless`, `HeadlessInput`, `EditorHeadless`, `fakes`; used by the engine's own tests | The exit test (Stillness restores enemy textures) lives in Dreamscape; no game has headless tests | Partial |

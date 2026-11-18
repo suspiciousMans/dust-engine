@@ -1,4 +1,4 @@
-use engine::material::{Material, MaterialFile, MaterialVariant};
+use dust_engine::material::{Material, MaterialFile, MaterialVariant};
 
 #[test]
 fn material_defaults_and_serialization() {
@@ -50,15 +50,15 @@ fn material_variant_tag_selects_shader_branch() {
     assert!(matches!(unlit, MaterialVariant::Unlit));
 
     // The rule we're encoding: LitNormals => use the normal-map shader variant.
-    let (v, f) = engine::shader::shader_files_for(&lit_normals);
+    let (v, f) = dust_engine::shader::shader_files_for(&lit_normals);
     assert_eq!(v, "shaders/mesh_normals.vert");
     assert_eq!(f, "shaders/mesh_normals.frag");
 
-    let (v, f) = engine::shader::shader_files_for(&lit);
+    let (v, f) = dust_engine::shader::shader_files_for(&lit);
     assert_eq!(v, "shaders/mesh.vert");
     assert_eq!(f, "shaders/mesh.frag");
 
-    let (v, f) = engine::shader::shader_files_for(&unlit);
+    let (v, f) = dust_engine::shader::shader_files_for(&unlit);
     assert_eq!(v, "shaders/mesh.vert");
     assert_eq!(f, "shaders/mesh.frag");
 }

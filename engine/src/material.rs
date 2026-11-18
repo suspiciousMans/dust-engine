@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn material_load_dir_skips_non_ron() {
-        let tmp = std::env::temp_dir().join("jame_test_material_dir");
+        let tmp = std::env::temp_dir().join("dust_test_material_dir");
         let _ = std::fs::create_dir_all(&tmp);
         std::fs::write(tmp.join("mat.ron"), "(name: \"x\", material: (roughness: 0.5))").unwrap();
         std::fs::write(tmp.join("ignore.txt"), "nope").unwrap();

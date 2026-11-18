@@ -18,7 +18,7 @@ pub enum TextureFilterMode {
 
 /// The visual "look" knobs a profile controls. Resolution/fog/dither/lighting
 /// are plain uniforms; `affine_texture_mapping` selects a compiled shader
-/// variant (see `engine::shader::ShaderVariantCache`) since `noperspective`
+/// variant (see `dust_engine::shader::ShaderVariantCache`) since `noperspective`
 /// interpolation is a compile-time GLSL qualifier, not something a uniform
 /// can toggle.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -61,8 +61,8 @@ pub struct RenderParams {
     pub backface_culling: bool,
     /// In-game HUD look (position, bar width/color, title size, toast
     /// color) — edited live via the F1 panel's "HUD" section
-    /// (`engine::ui::panels::hud_style_editor`) and drawn by
-    /// `engine::ui::hud::draw_hud`. `#[serde(default)]` so profiles saved
+    /// (`dust_engine::ui::panels::hud_style_editor`) and drawn by
+    /// `dust_engine::ui::hud::draw_hud`. `#[serde(default)]` so profiles saved
     /// before this field existed still load with the exact same HUD look
     /// they always had (the defaults match the old hardcoded values).
     #[serde(default)]

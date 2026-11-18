@@ -88,7 +88,7 @@ pub struct Light {
     pub color: Vec3,
     pub intensity: f32,
     pub kind: LightKind,
-    /// Mirrors `engine::level::LevelLight::is_static` — see
+    /// Mirrors `dust_engine::level::LevelLight::is_static` — see
     /// `Sandbox::bake_static_lighting`.
     pub is_static: bool,
 }

@@ -1,4 +1,4 @@
-# Jame Engine
+# Dust Engine
 
 A lightweight Rust game engine (SDL2 + OpenGL) built around a PS2-era visual
 style: low internal resolution upscaled with nearest-neighbor filtering,
@@ -14,7 +14,7 @@ README is just the quick tour.
 ## Quick start
 
 ```
-cd jame-engine
+cd dust-engine
 cargo run -p sandbox
 ```
 
@@ -66,7 +66,7 @@ being reworked, so check there if a key differs. Release builds have no editor.
 ## Workspace layout
 
 ```
-jame-engine/
+dust-engine/
   engine/            the reusable library — rendering, ECS, physics, scripting, etc.
   games/sandbox/      the demo game — also the template for starting a new one
   games/physics-sandbox/  small particle/physics toy; reference host for the docked editor (F1)

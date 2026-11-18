@@ -56,7 +56,7 @@ pub fn plane() -> MeshData {
     MeshData { vertices, indices }
 }
 
-/// A 1x1 unit quad in the XY plane facing +Z — `engine::particles`'
+/// A 1x1 unit quad in the XY plane facing +Z — `dust_engine::particles`'
 /// billboard shape (scaled/rotated-to-face-camera per particle at draw
 /// time, not baked into the mesh itself).
 pub fn quad() -> MeshData {

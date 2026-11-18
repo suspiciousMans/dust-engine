@@ -18,7 +18,7 @@ pub enum PrimitiveKind {
 /// generated GPU mesh), an imported OBJ file, or an imported glTF/GLB
 /// file — either its first mesh-carrying node (`GltfFile`, for a plain
 /// level object) or one specific named node (`GltfNode`, for a rig part —
-/// see `engine::mesh::load_gltf` and the F2 panel's "Import glTF as
+/// see `dust_engine::mesh::load_gltf` and the F2 panel's "Import glTF as
 /// Rig..."). Only the node's first triangle primitive is used either way.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MeshSource {
@@ -28,7 +28,7 @@ pub enum MeshSource {
     GltfNode { path: PathBuf, node: String },
 }
 
-/// Mirrors `engine::animation::AnimationKind`, serializable so it can be
+/// Mirrors `dust_engine::animation::AnimationKind`, serializable so it can be
 /// saved/loaded as part of a `LevelObject`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum AnimationSpec {
@@ -86,7 +86,7 @@ pub struct LevelObject {
     /// still load (as `None`/no behavior).
     #[serde(default)]
     pub script: Option<PathBuf>,
-    /// An `engine::class::ObjectClass` this object was spawned from, if
+    /// An `dust_engine::class::ObjectClass` this object was spawned from, if
     /// any. When set, `mesh`/`texture_path`/`scale`/`is_dynamic`/
     /// `is_trigger`/`animation`/`script` above are resolved **from the
     /// class** at spawn time instead — this object's own copies of those
@@ -105,7 +105,7 @@ pub struct LevelObject {
     pub level_transition: Option<LevelTransition>,
     /// Only meaningful when `is_trigger` is true: plays a full-screen color
     /// flash/tint when the player enters this trigger — see
-    /// `Sandbox::on_trigger_entered`/`engine::screen_effect::ScreenEffectState`.
+    /// `Sandbox::on_trigger_entered`/`dust_engine::screen_effect::ScreenEffectState`.
     /// Independent of `level_transition`: a trigger can have either, both, or
     /// neither. `#[serde(default)]` so levels saved before this field existed
     /// still load (as `None`/no effect).
@@ -113,7 +113,7 @@ pub struct LevelObject {
     pub screen_effect: Option<ScreenEffectSpec>,
     /// Only meaningful when `is_trigger` is true: jostles the camera when
     /// the player enters this trigger — see `Sandbox::on_trigger_entered`/
-    /// `engine::camera::CameraShakeState`. Independent of `screen_effect`/
+    /// `dust_engine::camera::CameraShakeState`. Independent of `screen_effect`/
     /// `level_transition`. `#[serde(default)]` so levels saved before this
     /// field existed still load (as `None`/no shake).
     #[serde(default)]
@@ -138,7 +138,7 @@ pub struct LevelLight {
     pub is_static: bool,
 }
 
-/// A placed instance of a `engine::rig::RigAsset` — a separate list from
+/// A placed instance of a `dust_engine::rig::RigAsset` — a separate list from
 /// `objects` because a rig is structurally a multi-entity hierarchy, not a
 /// single mesh. No per-instance scale: scale is authored per-part inside
 /// the rig asset itself, since scaling only the root's own mesh (not the
@@ -196,7 +196,7 @@ pub struct CharacterInstance {
 
 /// A placed periodic character spawner — a sibling list on `Level` like
 /// `LevelLight`/`RigInstance`, since a spawner has no mesh/texture of its
-/// own, just a position and a spawn config. See `engine::ai::SpawnerConfig`
+/// own, just a position and a spawn config. See `dust_engine::ai::SpawnerConfig`
 /// for what each field does; `Sandbox::spawn_spawner` builds that (plus
 /// runtime `SpawnerState`) from this on level load.
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -46,8 +46,8 @@ $cargoTomlPath = Join-Path $destDir "Cargo.toml"
 # Rename the window title / fatal-error dialog title in the copied source.
 $mainRsPath = Join-Path $destDir "src\main.rs"
 $mainRs = Get-Content $mainRsPath -Raw
-$mainRs = $mainRs -replace 'Jame Engine Sandbox - Error', "Jame Engine $Name - Error"
-$mainRs = $mainRs -replace 'Jame Engine Sandbox', "Jame Engine $Name"
+$mainRs = $mainRs -replace 'Dust Engine Sandbox - Error', "Dust Engine $Name - Error"
+$mainRs = $mainRs -replace 'Dust Engine Sandbox', "Dust Engine $Name"
 $mainRs | Set-Content $mainRsPath -NoNewline
 
 # Register the new crate in the workspace.

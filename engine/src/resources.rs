@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "resource `engine::resources::tests::Score` not found")]
+    #[should_panic(expected = "resource `dust_engine::resources::tests::Score` not found")]
     fn require_panics_naming_the_type() {
         let r = Resources::new();
         let _ = r.require::<Score>();

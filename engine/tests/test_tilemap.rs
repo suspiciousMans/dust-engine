@@ -1,4 +1,4 @@
-use engine::tilemap::{TileLayer, TileOrientation, TileSet, Tilemap};
+use dust_engine::tilemap::{TileLayer, TileOrientation, TileSet, Tilemap};
 
 #[test]
 fn tilemap_default_and_serialization() {

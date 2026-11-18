@@ -63,7 +63,7 @@ pub enum ClientMessage {
     /// request) to advance, `index` the 0-based choice picked.
     DialogueChoice { speaker: NetId, index: usize },
     /// Sent when a connected client changes their player-model appearance
-    /// mid-session (see `engine::ui::AppearanceAction`). The host relays
+    /// mid-session (see `dust_engine::ui::AppearanceAction`). The host relays
     /// this out to every peer as `ServerMessage::PlayerAppearanceChanged`
     /// so everyone rebuilds that player's proxy with the new model — see
     /// the same field's doc comment on `Hello` for the path convention.

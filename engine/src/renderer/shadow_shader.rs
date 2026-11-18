@@ -11,7 +11,7 @@
 //! * Fragment: has a `void main()` and writes its colour to `frag_output`
 //!   (default `FragColor`, a `vec4`).
 //!
-//! The patcher renames the user's `main` to `jame_user_main`, appends the
+//! The patcher renames the user's `main` to `dust_user_main`, appends the
 //! shadow code and a new `main` that calls it. The fragment's final colour
 //! is multiplied by `1 - strength * facing * (1 - lit)`.
 //!
@@ -38,28 +38,28 @@ void main() {
 ";
 
 const VERT_APPEND: &str = "
-// ---- jame shadow receiver (appended by renderer::shadow_shader) ----
+// ---- dust shadow receiver (appended by renderer::shadow_shader) ----
 uniform mat4 uShadowMatrix;
 uniform vec3 uShadowLightDir;
 uniform float uShadowNormalOffset;
-out vec4 vJameShadowPos;
-out float vJameShadowNdotL;
+out vec4 vDustShadowPos;
+out float vDustShadowNdotL;
 void main() {
-    jame_user_main();
+    dust_user_main();
     vec4 wp = uModel * vec4(aPos, 1.0);
     vec3 wn = normalize(mat3(uModel) * aNormal);
     float ndl = dot(wn, normalize(uShadowLightDir));
     float c = clamp(ndl, 0.0, 1.0);
     wp.xyz += wn * (uShadowNormalOffset * sqrt(max(1.0 - c * c, 0.0)));
-    vJameShadowPos = uShadowMatrix * wp;
-    vJameShadowNdotL = ndl;
+    vDustShadowPos = uShadowMatrix * wp;
+    vDustShadowNdotL = ndl;
 }
 ";
 
 const FRAG_APPEND: &str = "
-// ---- jame shadow receiver (appended by renderer::shadow_shader) ----
-in vec4 vJameShadowPos;
-in float vJameShadowNdotL;
+// ---- dust shadow receiver (appended by renderer::shadow_shader) ----
+in vec4 vDustShadowPos;
+in float vDustShadowNdotL;
 uniform sampler2D uShadowMap;
 uniform vec2 uShadowBias;
 uniform float uShadowTexel;
@@ -68,17 +68,17 @@ uniform float uShadowPcfStep;
 uniform int uShadowDither;
 uniform float uShadowStrength;
 
-float jame_bayer4(vec2 fc) {
+float dust_bayer4(vec2 fc) {
     float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
                             3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
     ivec2 i = ivec2(mod(fc, 4.0));
     return (m[i.x + i.y * 4] + 0.5) / 16.0;
 }
 
-float jame_shadow_lit() {
-    vec3 p = vJameShadowPos.xyz / vJameShadowPos.w;
+float dust_shadow_lit() {
+    vec3 p = vDustShadowPos.xyz / vDustShadowPos.w;
     if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
-    float ndl = clamp(vJameShadowNdotL, 0.0, 1.0);
+    float ndl = clamp(vDustShadowNdotL, 0.0, 1.0);
     float tanT = min(sqrt(max(1.0 - ndl * ndl, 0.0)) / max(ndl, 0.05), 8.0);
     float ref = p.z - (uShadowBias.x + uShadowBias.y * tanT);
     float sum = 0.0;
@@ -92,22 +92,22 @@ float jame_shadow_lit() {
     }
     float lit = sum / n;
     if (uShadowDither != 0) {
-        lit = (lit > jame_bayer4(gl_FragCoord.xy)) ? 1.0 : 0.0;
+        lit = (lit > dust_bayer4(gl_FragCoord.xy)) ? 1.0 : 0.0;
     }
     return lit;
 }
 
 void main() {
-    jame_user_main();
+    dust_user_main();
     if (uShadowStrength > 0.0) {
-        float lit = jame_shadow_lit();
-        float facing = smoothstep(0.0, 0.25, vJameShadowNdotL);
+        float lit = dust_shadow_lit();
+        float facing = smoothstep(0.0, 0.25, vDustShadowNdotL);
         __OUT__.rgb *= 1.0 - uShadowStrength * facing * (1.0 - lit);
     }
 }
 ";
 
-/// Renames the first `void main(` in `src` to `void jame_user_main(`.
+/// Renames the first `void main(` in `src` to `void dust_user_main(`.
 fn rename_main(src: &str) -> anyhow::Result<String> {
     let mut search_from = 0;
     while let Some(rel) = src[search_from..].find("void") {
@@ -119,7 +119,7 @@ fn rename_main(src: &str) -> anyhow::Result<String> {
                 let name_start = src.len() - rest.len() - 4;
                 let mut out = String::with_capacity(src.len() + 16);
                 out.push_str(&src[..name_start]);
-                out.push_str("jame_user_main");
+                out.push_str("dust_user_main");
                 out.push_str(rest);
                 return Ok(out);
             }
@@ -139,7 +139,7 @@ pub fn patch_mesh_shaders(
     frag: &str,
     frag_output: &str,
 ) -> anyhow::Result<(String, String)> {
-    if vert.contains("vJameShadowPos") || frag.contains("vJameShadowPos") {
+    if vert.contains("vDustShadowPos") || frag.contains("vDustShadowPos") {
         anyhow::bail!("shaders are already shadow-patched");
     }
     let mut v = rename_main(vert)?;
@@ -170,21 +170,21 @@ void main() { FragColor = vec4(1.0); }
     fn patch_wraps_main_and_keeps_originals() {
         let (v, f) = patch_mesh_shaders(VERT, FRAG, "FragColor").unwrap();
         assert!(v.starts_with("#version 330 core"));
-        assert!(v.contains("void jame_user_main()"));
+        assert!(v.contains("void dust_user_main()"));
         assert_eq!(v.matches("void main()").count(), 1);
-        assert!(v.contains("jame_user_main();"));
-        assert!(f.contains("void jame_user_main() { FragColor"));
+        assert!(v.contains("dust_user_main();"));
+        assert!(f.contains("void dust_user_main() { FragColor"));
         assert_eq!(f.matches("void main()").count(), 1);
         assert!(f.contains("FragColor.rgb *="));
         assert!(!f.contains("__OUT__"));
         // Original text is a prefix modulo the rename.
-        assert!(v.replace("jame_user_main", "main").starts_with(VERT.trim_end()));
+        assert!(v.replace("dust_user_main", "main").starts_with(VERT.trim_end()));
     }
 
     #[test]
     fn patch_handles_spacing_and_void_args() {
         let (v, _) = patch_mesh_shaders("void  main ( void ) { }", "void main(){}", "C").unwrap();
-        assert!(v.starts_with("void  jame_user_main ( void )") || v.starts_with("void jame_user_main ( void )"), "{}", &v[..40]);
+        assert!(v.starts_with("void  dust_user_main ( void )") || v.starts_with("void dust_user_main ( void )"), "{}", &v[..40]);
     }
 
     #[test]
@@ -251,7 +251,7 @@ void main() { FragColor = vec4(1.0); }
             assert_eq!(fnv1a(vert), hv, "{game} mesh.vert changed");
             assert_eq!(fnv1a(frag), hf, "{game} mesh.frag changed");
             for src in [vert, frag] {
-                assert!(!src.contains("jame_user_main") && !src.contains("uShadow") && !src.contains("vJameShadow"), "{game}");
+                assert!(!src.contains("dust_user_main") && !src.contains("uShadow") && !src.contains("vDustShadow"), "{game}");
             }
         }
     }
@@ -263,8 +263,8 @@ void main() { FragColor = vec4(1.0); }
         assert_ne!(v, vert);
         assert_ne!(f, frag);
         // Un-renaming the wrapper gives back the original source as a prefix.
-        assert!(v.replace("jame_user_main", "main").starts_with(vert.trim_end()));
-        assert!(f.replace("jame_user_main", "main").starts_with(frag.trim_end()));
+        assert!(v.replace("dust_user_main", "main").starts_with(vert.trim_end()));
+        assert!(f.replace("dust_user_main", "main").starts_with(frag.trim_end()));
         // The game's own uniforms/outs are still declared exactly once.
         assert_eq!(v.matches("uniform mat4 uModel;").count(), 1);
         assert_eq!(f.matches("out vec4 FragColor;").count(), 1);

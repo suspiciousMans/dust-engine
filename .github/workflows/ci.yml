@@ -92,7 +92,7 @@ jobs:
 
       - name: Run engine test suite
         shell: pwsh
-        run: cargo test -p engine --verbose
+        run: cargo test -p dust_engine --verbose
 
       - name: Test workspace
         shell: pwsh

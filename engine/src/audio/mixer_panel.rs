@@ -6,9 +6,9 @@
 //! `&mut egui::Ui`; the host owns the engine and a [`MixerPanelState`]):
 //!
 //! ```ignore
-//! use engine::audio::{draw_mixer_panel, AudioContext, MixerPanelState};
-//! use engine::editor::shell::ShellHost;
-//! use engine::ui::EditorTab;
+//! use dust_engine::audio::{draw_mixer_panel, AudioContext, MixerPanelState};
+//! use dust_engine::editor::shell::ShellHost;
+//! use dust_engine::ui::EditorTab;
 //!
 //! struct Host { audio: Option<AudioContext>, mixer_ui: MixerPanelState }
 //!

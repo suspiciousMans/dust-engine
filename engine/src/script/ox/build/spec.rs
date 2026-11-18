@@ -46,7 +46,7 @@ inline pi() -> Float = std::f64::consts::PI
 inline tau() -> Float = std::f64::consts::TAU
 "#;
 
-/// The smoke-test driver surface (`engine::script::ox::smoke`): what a
+/// The smoke-test driver surface (`dust_engine::script::ox::smoke`): what a
 /// `tick(frame: Int, t: Float)` script may call. Same line format as [`SPEC`].
 /// `check_pass`/`check_fail`/`finish_with` are plumbing for the ox-level
 /// wrappers in [`SMOKE_PRELUDE`]: a `Bool` argument cannot cross into a native

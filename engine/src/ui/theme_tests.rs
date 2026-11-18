@@ -1,4 +1,4 @@
-use engine::ui::theme::EditorTheme;
+use dust_engine::ui::theme::EditorTheme;
 
 #[test]
 fn test_theme_builtin_default_roundtrip() {

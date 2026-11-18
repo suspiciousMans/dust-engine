@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn save_and_load_file() {
-        let dir = std::env::temp_dir().join(format!("jame_mixer_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dust_mixer_{}", std::process::id()));
         let path = dir.join("nested").join("mixer.ron");
         let mut m = Mixer::new();
         m.set_gain("music", 0.4);

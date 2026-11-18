@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_scan_for_files_lists_files_from_real_directory() {
-        let tmp = std::env::temp_dir().join("jame_test_asset_dir");
+        let tmp = std::env::temp_dir().join("dust_test_asset_dir");
         let _ = fs::create_dir_all(&tmp);
 
         // Create a couple of files with known extensions.
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_scan_for_files_empty_directory() {
-        let tmp = std::env::temp_dir().join("jame_test_empty_dir");
+        let tmp = std::env::temp_dir().join("dust_test_empty_dir");
         let _ = fs::create_dir_all(&tmp);
 
         let found = scan_for_files(&tmp, &["png", "jpg"]);

@@ -1,4 +1,4 @@
-use engine::ui::output::OutputPanel;
+use dust_engine::ui::output::OutputPanel;
 
 #[test]
 fn test_output_panel_appends_lines() {

@@ -48,7 +48,7 @@ pub struct MeshRenderer {
 | `Lit` | `shaders/mesh.vert` | `shaders/mesh.frag` |
 | `Unlit` | `shaders/mesh.vert` | `shaders/mesh.frag` |
 
-Uses `jame_engine::shader::shader_files_for`. **This function does not exist on disk** (see §5).
+Uses `dust_engine::shader::shader_files_for`. **This function does not exist on disk** (see §5).
 
 ---
 
@@ -89,7 +89,7 @@ error[E0596]: ...  --> engine/src/lib.rs:25:1
 
 Additionally, `variant.rs:3` does `use super::link_program;` — that function
 would need to live in the missing module root. The test's
-`jame_engine::shader::shader_files_for` likewise has nowhere to live.
+`dust_engine::shader::shader_files_for` likewise has nowhere to live.
 
 **Verdict: the crate does not compile. The shader module entrypoint +
 program-linking + `shader_files_for` implementation are all absent from disk.**
@@ -178,7 +178,7 @@ Everything listed under "Missing" above is now in place; this audit is kept
 for history only.
 
 - `shader::shader_files_for` lives in `engine/src/shader/mod.rs`
-  (`test_material.rs` now imports it via `engine::`, the real crate name).
+  (`test_material.rs` now imports it via `dust_engine::`, the real crate name).
 - `mesh_normals.{vert,frag}` rewritten: no tangent attribute (the vertex
   format has none) — the TBN is rebuilt per pixel from screen-space
   derivatives; per-pixel directional + point lights match `mesh.vert`;

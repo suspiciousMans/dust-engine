@@ -27,27 +27,27 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use engine::ai::{CharacterBrain, CharacterMeta, Dialogue, DialogueNode, Health, SpawnerConfig, SpawnerState};
-use engine::animation::{AnimationKind, Animator};
-use engine::app::Context;
-use engine::ecs::{euler_deg_to_quat, Entity, LevelObjectMeta, Light, MeshRenderer, Transform, World};
-use engine::editor::bounds::{local_bounds, Aabb, LocalBounds};
-use engine::editor::hierarchy::PrimitiveShape;
-use engine::editor::interaction::ViewportEvent;
-use engine::editor::runtime::EditorRuntime;
-use engine::editor::scene_io::{NullSnapshot, SceneIo};
-use engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
-use engine::editor::{EditorMode as ShellMode, EditorState, Locked, Name, Primitive, Registry};
-use engine::glam::{EulerRot, Mat4, Quat, Vec3};
-use engine::glow;
-use engine::level::{Level, MeshSource, PrimitiveKind};
-use engine::particles::{ParticleEmitter, ParticleEmitterDef};
-use engine::physics::{Collider, ColliderShape, RigidBody};
-use engine::renderer::PostParams;
-use engine::rig::{RigPart, RigPartMeta};
-use engine::sdl2::event::Event;
-use engine::sdl2::keyboard::Keycode;
-use engine::ui::EditorTab;
+use dust_engine::ai::{CharacterBrain, CharacterMeta, Dialogue, DialogueNode, Health, SpawnerConfig, SpawnerState};
+use dust_engine::animation::{AnimationKind, Animator};
+use dust_engine::app::Context;
+use dust_engine::ecs::{euler_deg_to_quat, Entity, LevelObjectMeta, Light, MeshRenderer, Transform, World};
+use dust_engine::editor::bounds::{local_bounds, Aabb, LocalBounds};
+use dust_engine::editor::hierarchy::PrimitiveShape;
+use dust_engine::editor::interaction::ViewportEvent;
+use dust_engine::editor::runtime::EditorRuntime;
+use dust_engine::editor::scene_io::{NullSnapshot, SceneIo};
+use dust_engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
+use dust_engine::editor::{EditorMode as ShellMode, EditorState, Locked, Name, Primitive, Registry};
+use dust_engine::glam::{EulerRot, Mat4, Quat, Vec3};
+use dust_engine::glow;
+use dust_engine::level::{Level, MeshSource, PrimitiveKind};
+use dust_engine::particles::{ParticleEmitter, ParticleEmitterDef};
+use dust_engine::physics::{Collider, ColliderShape, RigidBody};
+use dust_engine::renderer::PostParams;
+use dust_engine::rig::{RigPart, RigPartMeta};
+use dust_engine::sdl2::event::Event;
+use dust_engine::sdl2::keyboard::Keycode;
+use dust_engine::ui::EditorTab;
 
 use crate::{collider_half_extents, ClassMember, EditorMode, PendingTexturePick, Sandbox};
 
@@ -94,8 +94,8 @@ struct Bridge {
 #[derive(Default)]
 struct Pending {
     picked_texture: Option<std::path::PathBuf>,
-    multiplayer: Option<engine::ui::MultiplayerAction>,
-    appearance: Option<engine::ui::AppearanceAction>,
+    multiplayer: Option<dust_engine::ui::MultiplayerAction>,
+    appearance: Option<dust_engine::ui::AppearanceAction>,
 }
 
 struct DockHost<'a> {
@@ -212,7 +212,7 @@ impl Sandbox {
         });
         // The default pose sits at the origin, which is inside the exit trigger of the
         // default level; start further out so the level is visible.
-        let mut camera = engine::editor::camera::EditorCamera::new(Vec3::new(0.0, 1.0, 0.0), 14.0);
+        let mut camera = dust_engine::editor::camera::EditorCamera::new(Vec3::new(0.0, 1.0, 0.0), 14.0);
         camera.yaw = 0.0;
         camera.pitch = 0.3;
         camera.far = 500.0;
@@ -407,19 +407,19 @@ impl Sandbox {
             self.apply_picked_texture(gl, path);
         }
         match pending.multiplayer {
-            Some(engine::ui::MultiplayerAction::Host) => self.start_hosting(),
-            Some(engine::ui::MultiplayerAction::Join) => self.join_game(),
-            Some(engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
-            Some(engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
+            Some(dust_engine::ui::MultiplayerAction::Host) => self.start_hosting(),
+            Some(dust_engine::ui::MultiplayerAction::Join) => self.join_game(),
+            Some(dust_engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
+            Some(dust_engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
                 self.set_level_switch_permission(net_id, allowed)
             }
-            Some(engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
+            Some(dust_engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
             None => {}
         }
         match pending.appearance {
-            Some(engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
-            Some(engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
-            Some(engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
+            Some(dust_engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
+            Some(dust_engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
+            Some(dust_engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
             None => {}
         }
         self.apply_scene_requests(ctx.gl(), d);
@@ -629,7 +629,7 @@ impl Sandbox {
 
         let part_names: Vec<(Entity, String)> = self
             .world
-            .query::<&engine::rig::Rig>()
+            .query::<&dust_engine::rig::Rig>()
             .iter()
             .flat_map(|(_, rig)| rig.parts_by_name.iter().map(|(n, e)| (*e, n.clone())).collect::<Vec<_>>())
             .collect();
@@ -683,7 +683,7 @@ impl Sandbox {
         let scriptless: Vec<(Entity, std::path::PathBuf)> = self
             .world
             .query::<&LevelObjectMeta>()
-            .without::<&engine::behavior::BehaviorSlot>()
+            .without::<&dust_engine::behavior::BehaviorSlot>()
             .iter()
             .filter_map(|(e, m)| m.script_path.clone().map(|p| (e, p)))
             .collect();
@@ -872,7 +872,7 @@ impl SceneIo for GameSceneIo {
     fn open(&mut self, path: &Path, _world: &mut World) -> Result<(), String> {
         let path = self.resolve(path);
         // Parse now so a bad file is refused before the shell clears its selection and undo.
-        engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        dust_engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
         self.shared.borrow_mut().queue.push(SceneRequest::Open(path.clone()));
         self.current = Some(path);
         Ok(())
@@ -914,7 +914,7 @@ impl Sandbox {
 
     /// Loads a level file as the current level (File > Open, a dropped `.ron`).
     fn open_level_file(&mut self, gl: &glow::Context, path: &Path) -> anyhow::Result<()> {
-        let level = engine::level::load_from_file(path)?;
+        let level = dust_engine::level::load_from_file(path)?;
         self.sync_current_level_into_cache();
         self.apply_level(gl, &level)?;
         self.cache_level(level);
@@ -927,7 +927,7 @@ impl Sandbox {
         let mut level = self.build_level_from_ecs();
         let stem = path.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty() && !s.starts_with('.'));
         level.name = stem.ok_or_else(|| anyhow::anyhow!("{path:?} has no file name"))?.to_string();
-        engine::level::save_to_file(&level, path)?;
+        dust_engine::level::save_to_file(&level, path)?;
         log::info!("saved level '{}' to {path:?}", level.name);
         self.current_level_name = level.name.clone();
         self.cache_level(level);
@@ -983,7 +983,7 @@ impl Sandbox {
             };
             self.push_undo_snapshot();
             self.pending_texture_pick = Some(pick);
-            self.apply_picked_texture(gl, engine::level::relativize(&path, &self.asset_root));
+            self.apply_picked_texture(gl, dust_engine::level::relativize(&path, &self.asset_root));
         }
     }
 
@@ -1020,8 +1020,8 @@ fn editor_registry() -> Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::ai::Disposition;
-    use engine::editor::EditorAction;
+    use dust_engine::ai::Disposition;
+    use dust_engine::editor::EditorAction;
 
     fn level_object(name: &str, at: Vec3) -> (Transform, LevelObjectMeta, Collider) {
         let source = MeshSource::Primitive(PrimitiveKind::Cube);
@@ -1181,8 +1181,8 @@ mod tests {
 
     #[test]
     fn rays_pick_bridged_level_objects_and_skip_locked_rig_parts() {
-        use engine::editor::picking::pick_nearest;
-        use engine::editor::cam_matrices::Ray;
+        use dust_engine::editor::picking::pick_nearest;
+        use dust_engine::editor::cam_matrices::Ray;
         let mut game = Sandbox::new();
         let mut bridge = Bridge::default();
         let near = game.world.spawn(level_object("Near", Vec3::new(0.0, 0.0, 0.0)));
@@ -1224,7 +1224,7 @@ mod tests {
         let (mut io, shared) = scene_io(&root);
         let mut world = World::new();
         let level = Level { name: "arena".into(), ..Level::default() };
-        engine::level::save_to_file(&level, &root.join("levels/arena.ron")).unwrap();
+        dust_engine::level::save_to_file(&level, &root.join("levels/arena.ron")).unwrap();
 
         // A bare name means levels/<name>.ron; the file is parsed up front.
         io.open(Path::new("arena"), &mut world).unwrap();
@@ -1262,7 +1262,7 @@ mod tests {
         game.world.spawn(level_object("Crate", Vec3::new(1.0, 2.0, 3.0)));
         let path = root.join("levels/mine.ron");
         game.save_level_file(&path).unwrap();
-        let saved = engine::level::load_from_file(&path).unwrap();
+        let saved = dust_engine::level::load_from_file(&path).unwrap();
         assert_eq!(saved.name, "mine");
         assert!(saved.objects.iter().any(|o| o.name == "Crate" && o.position == [1.0, 2.0, 3.0]));
         assert_eq!(game.current_level_name, "mine");

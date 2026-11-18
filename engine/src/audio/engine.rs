@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(vol(&b, "rain"), 0.125); // 1 * 0.25 * 0.5 pushed to the backend
         assert_eq!(b.mixer_settings(), a.mixer_settings());
 
-        let path = std::env::temp_dir().join(format!("jame_engine_mixer_{}.ron", std::process::id()));
+        let path = std::env::temp_dir().join(format!("dust_engine_mixer_{}.ron", std::process::id()));
         a.save_mixer_settings(&path).unwrap();
         let mut c = engine();
         assert!(c.load_mixer_settings(&path).unwrap().is_empty());

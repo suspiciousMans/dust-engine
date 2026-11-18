@@ -2,7 +2,7 @@
 
 Status: **implemented and the only scripting system** (plan: Stage 5 item 4). The `.pss` interpreter, `ScriptBehavior`,
 `testkit::SmokeTestHost`, the `legacy-pss` feature and `tools/script_editor` were removed (owner decision 2026-11-11).
-Engine name stays "Jame" until Stage 6; paths below will move with the rename.
+Engine name stays "Dust" until Stage 6; paths below will move with the rename.
 
 ## 1. What Oxidized is today (measured, not assumed)
 
@@ -114,14 +114,14 @@ interact tone/sound + `on_trigger_enter` logs and spawns `pickup_spark`, `on_tri
 Headless tests (no SDL/GL; real `oxidized` + `rustc`; skipped with a message if `oxidized` is missing):
 
 ```
-$ CARGO_TARGET_DIR=$PWD/target cargo test -p engine --lib script:: --offline -j2
+$ CARGO_TARGET_DIR=$PWD/target cargo test -p dust_engine --lib script:: --offline -j2
 test script::ox::tests::spin_bob_runs_through_behavior_hooks ... ok
 test script::ox::tests::compile_errors_become_diagnostics_and_fix_hot_swaps ... ok
 test script::ox::tests::bad_hook_signature_is_reported_with_line ... ok
 test script::ox::tests::script_panic_is_contained ... ok
 test script::ox::tests::file_watcher_triggers_rebuild_and_swap ... ok
 (+ 7 build/diag/spec/codegen unit tests and the 10 legacy interpreter tests)  test result: ok. 22 passed
-$ cargo test -p engine --no-default-features --lib script::   -> 12 passed (no legacy-pss)
+$ cargo test -p dust_engine --no-default-features --lib script::   -> 12 passed (no legacy-pss)
 $ cargo test -p oxc_scripts                                    -> 9 passed
 $ oxc_scripts build games/sandbox/assets/scripts
 ok    bob_demo -> …/liboxs_bob_demo.0.so [hooks: on_ready, on_update, on_interact] (3.7s)

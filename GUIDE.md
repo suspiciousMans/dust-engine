@@ -1,4 +1,4 @@
-# Jame Engine Guide
+# Dust Engine Guide
 
 A lightweight Rust game engine (SDL2 + OpenGL) for building multiple games with
 a PS2-era visual style: low internal resolution upscaled with nearest-neighbor
@@ -9,7 +9,7 @@ savable "shader profiles" you can tweak live in an in-game editor GUI.
 ## Workspace layout
 
 ```
-jame-engine/
+dust-engine/
   Cargo.toml              workspace root (members = engine, games/sandbox, games/mushroom_man,
                           games/walkaround_demo, games/physics-sandbox, tools/oxc_scripts)
   .cargo/config.toml       env vars needed to build vendored SDL2 with a recent CMake/GCC
@@ -56,7 +56,7 @@ jame-engine/
 ## Quick start
 
 ```
-cd jame-engine
+cd dust-engine
 cargo run -p sandbox
 ```
 
@@ -85,7 +85,7 @@ have no editor at all and boot straight into Play.
 
 ## The `Game` trait and the main loop
 
-Every game implements `engine::app::Game`:
+Every game implements `dust_engine::app::Game`:
 
 ```rust
 trait Game {
@@ -107,7 +107,7 @@ See `games/sandbox/src/main.rs`'s `Sandbox` struct for a complete example.
 
 ## Scene basics: ECS
 
-The engine uses `hecs` (re-exported as `engine::ecs`). A `World` holds
+The engine uses `hecs` (re-exported as `dust_engine::ecs`). A `World` holds
 entities; each entity is a bundle of components. The two you'll use constantly:
 
 ```rust
@@ -136,15 +136,15 @@ world.spawn((
   interact_impulse }` — tags the player entity spawned in Play mode (see
   "Physics" and "Running the game" below). Plain tunable fields.
 
-Load meshes/textures with `engine::mesh::load_obj(path)` (returns one
-`MeshData` per OBJ sub-object) and `engine::mesh::GpuMesh::upload(gl, &data)`,
-and `engine::texture::GpuTexture::load_from_file(gl, path, TextureFilter::Nearest)`.
+Load meshes/textures with `dust_engine::mesh::load_obj(path)` (returns one
+`MeshData` per OBJ sub-object) and `dust_engine::mesh::GpuMesh::upload(gl, &data)`,
+and `dust_engine::texture::GpuTexture::load_from_file(gl, path, TextureFilter::Nearest)`.
 
 Draw by querying: `world.query::<(&Transform, &MeshRenderer)>().iter()`.
 
 ## Camera
 
-`engine::camera::OrbitCamera::new(target, distance)` — orbits a point via
+`dust_engine::camera::OrbitCamera::new(target, distance)` — orbits a point via
 `.orbit(delta_yaw, delta_pitch)` and `.zoom(delta)`; `.view_matrix()` and
 `.projection_matrix(aspect)` feed straight into your shader uniforms.
 
@@ -183,7 +183,7 @@ way). For a closed mesh this changes nothing visible from a normal
 distance — the front face already occludes the back one via the depth
 buffer — but it's what keeps the camera from rendering a wall's or
 object's *interior* surface when it clips very close to or slightly
-inside solid geometry (the simple collision resolver in `engine::physics`
+inside solid geometry (the simple collision resolver in `dust_engine::physics`
 doesn't guarantee zero interpenetration, so this happens in practice).
 `#[serde(default)]` (`false`) so profiles saved before this field existed
 keep their exact old look; the checkbox lives in the F1 panel's
@@ -198,7 +198,7 @@ the light into a square map, then a lookup in the mesh fragment shader that
 darkens the final colour by `1 - strength * facing * (1 - lit)`.
 
 ```rust
-use engine::renderer::{patch_mesh_shaders, ShadowBounds, ShadowFilter, ShadowSettings};
+use dust_engine::renderer::{patch_mesh_shaders, ShadowBounds, ShadowFilter, ShadowSettings};
 
 // 1. Setup: patch YOUR mesh shaders in memory (files on disk are untouched).
 //    Contract: vert declares `uModel`, `aPos` (loc 0), `aNormal`; both have
@@ -261,7 +261,7 @@ meshes you submit with `shadow_draw` cast, and only programs built from
 
 ## Shader profiles
 
-A `ShaderProfile` (in `engine::profile`) bundles shader file paths + a
+A `ShaderProfile` (in `dust_engine::profile`) bundles shader file paths + a
 `RenderParams`. They're saved as human-editable `.ron` files under a game's
 `profiles/` folder — open one in a text editor and change numbers directly if
 you don't want to use the GUI. On first run, if a game's `profiles/` folder is
@@ -270,7 +270,7 @@ starter looks (`ps2_classic`, `ps1_wobble`, `clean_lowpoly`) so there's always
 something to load and cycle through — copy that pattern (or just copy the
 generated `.ron` files) into a new game.
 
-`engine::profile::ProfileCycler` manages a loaded set: `.next()`/`.prev()` for
+`dust_engine::profile::ProfileCycler` manages a loaded set: `.next()`/`.prev()` for
 hotkey cycling, `.add()` for a runtime "save as new profile", `.select(i)` for
 GUI list clicks. `load_dir`/`load_from_file`/`save_to_file` handle the RON I/O.
 
@@ -281,13 +281,13 @@ GUI list clicks. `load_dir`/`load_from_file`/`save_to_file` handle the RON I/O.
 > described in "The docked editor" below); the legacy panels are not the only
 > editor, and new games should host the docked one.
 
-`engine::ui::EguiState` bridges SDL2 input to `egui` and paints it via
+`dust_engine::ui::EguiState` bridges SDL2 input to `egui` and paints it via
 `egui_glow` — any game gets this by owning one `EguiState`, forwarding every
 SDL event to `handle_event`, and wrapping its panel code in `.run(...)` /
 `.paint(...)` once per frame (see `Sandbox::render` for the exact pattern,
 including gating camera-drag and hotkeys on `ui.wants_pointer_input()` /
 `ui.wants_keyboard_input()` so interacting with either panel doesn't also spin
-the camera or trigger Tab/F5). `engine::ui::render_params_editor(ui, &mut
+the camera or trigger Tab/F5). `dust_engine::ui::render_params_editor(ui, &mut
 params)` draws sliders/checkboxes for every `RenderParams` field and is
 reusable as-is in any game.
 
@@ -297,7 +297,7 @@ and a left-hand **level editor panel** (F2 — described next).
 
 ## Level editor
 
-A `Level` (in `engine::level`) is a named list of `LevelObject`s — name, mesh
+A `Level` (in `dust_engine::level`) is a named list of `LevelObject`s — name, mesh
 source, optional texture, and a position/rotation/scale — saved as a
 human-editable `.ron` file under a game's `levels/` folder, the same
 auto-bootstrap-if-empty convention as shader profiles: on first run
@@ -305,13 +305,13 @@ auto-bootstrap-if-empty convention as shader profiles: on first run
 scene to `levels/default.ron` so there's always something to load.
 
 A `LevelObject`'s mesh is either a built-in **primitive** (`Cube`/`Plane`,
-generated procedurally by `engine::mesh::primitives` and uploaded once, then
+generated procedurally by `dust_engine::mesh::primitives` and uploaded once, then
 shared via `Arc<GpuMesh>` across every instance — scale is applied through the
 `Transform`, not by regenerating geometry) or an **`ObjFile`** path (only the
 first sub-mesh of a multi-object OBJ is used per level object — author
 multi-part models as separate level objects instead). Texture/OBJ paths are
 stored relative to the game's asset root when possible
-(`engine::level::relativize`), the same portability fix applied to shader
+(`dust_engine::level::relativize`), the same portability fix applied to shader
 profile paths, so saved levels don't break when the game is shipped to another
 machine.
 
@@ -332,7 +332,7 @@ The **F2 panel** (`Sandbox::draw_level_editor_ui`/`draw_selected_object_ui` in
   **Scale** as drag-value fields (click and drag left/right to change, or
   click once to type an exact number), **Assign Texture...**, and **Delete**.
   Rotation is edited as Euler degrees and only converted to the `Transform`'s
-  quaternion on change (`engine::glam`'s `Quat::from_euler`), so repeated
+  quaternion on change (`dust_engine::glam`'s `Quat::from_euler`), so repeated
   edits don't drift the value the way a naive Euler↔quaternion round-trip
   would.
 
@@ -378,7 +378,7 @@ non-empty. Both push an undo snapshot first.
 
 ## In-game profiler overlay
 
-`engine::ui::draw_profiler_overlay` draws a small always-on `egui::Area`
+`dust_engine::ui::draw_profiler_overlay` draws a small always-on `egui::Area`
 anchored top-right (the HUD lives top-left, so they never overlap): FPS and
 frame time (averaged over the last ~30 frames via `Sandbox.frame_times: VecDeque<f32>`),
 live entity count (`hecs::World::len()`), and a draw-call counter incremented
@@ -389,7 +389,7 @@ Edit and Play mode — it's a dev tool, not gameplay — and toggled off via a
 
 ## Hot reload on file change
 
-`engine::hotreload::HotReloadWatcher` wraps a `notify::RecommendedWatcher`
+`dust_engine::hotreload::HotReloadWatcher` wraps a `notify::RecommendedWatcher`
 watching a game's asset root recursively over a non-blocking channel;
 `poll_events()` drains and de-duplicates same-path events from the same save
 (editors often write a file 2-3 times per save). `Sandbox.hot_reload:
@@ -411,7 +411,7 @@ A drop-in replacement for the native file picker at every **texture** picker
 call site (`Assign Texture...`, the model importer's texture step, class
 texture assignment) — the only asset kind where a thumbnail is cheap and
 worth showing; model/audio/script pickers keep the plain `rfd::FileDialog`.
-`engine::ui::AssetBrowserState` recursively scans a root folder for
+`dust_engine::ui::AssetBrowserState` recursively scans a root folder for
 `png`/`jpg`/`jpeg` files and lazily uploads each thumbnail the first time
 it's visible. Texture registration with `egui_glow`'s painter has to happen
 *outside* the painter's own closure (it's exclusively borrowed during
@@ -424,10 +424,10 @@ remember "who asked" until the browser returns a clicked path.
 
 ## glTF import
 
-`engine::mesh::load_gltf` (mirrors the existing OBJ loader) reads a `.gltf`/
+`dust_engine::mesh::load_gltf` (mirrors the existing OBJ loader) reads a `.gltf`/
 `.glb` file's node tree, requiring the `TRIANGLES` primitive mode per mesh
 (other modes are skipped with a warning, same as OBJ's discarded materials)
-and mapping POSITION/NORMAL/TEXCOORD_0 onto `engine::mesh::Vertex` (missing
+and mapping POSITION/NORMAL/TEXCOORD_0 onto `dust_engine::mesh::Vertex` (missing
 attributes default the same way OBJ's loader does). Embedded and
 external images are decoded to RGBA8 and normalized from whatever glTF pixel
 format they were authored in. **No vertex skinning and no animation-channel
@@ -447,7 +447,7 @@ existing "Add instance of" flow, no new placement UI needed.
 
 Beyond the single hardcoded directional light (sun + ambient), the engine
 supports up to **4 point lights** per scene, placed and edited right in the
-level editor. A `LevelLight` (in `engine::level`) is a name, position, color,
+level editor. A `LevelLight` (in `dust_engine::level`) is a name, position, color,
 intensity, and range, saved as part of a `Level`'s `lights` list — same RON
 file, same portability rules as everything else in the level.
 
@@ -486,7 +486,7 @@ and a separate `(&Transform, &LevelObjectMeta, &Light)` query for the
 
 ## Physics
 
-`engine::physics` is a small, readable simulation, not a general solver: translation-only bodies, four collider shapes, sweep/ray/overlap queries, simple joints, a character controller. The "Physics audit" table in `docs/KNOWN-ISSUES.md` lists what exists, what is tested and what is missing (no convex meshes, no angular dynamics, no CCD for bodies, no kinematic body type, no sleeping islands). The examples below are compiled and run by `physics::guide_examples` in `engine/src/physics/mod.rs`.
+`dust_engine::physics` is a small, readable simulation, not a general solver: translation-only bodies, four collider shapes, sweep/ray/overlap queries, simple joints, a character controller. The "Physics audit" table in `docs/KNOWN-ISSUES.md` lists what exists, what is tested and what is missing (no convex meshes, no angular dynamics, no CCD for bodies, no kinematic body type, no sleeping islands). The examples below are compiled and run by `physics::guide_examples` in `engine/src/physics/mod.rs`.
 
 ### Bodies and colliders
 
@@ -537,7 +537,7 @@ Events are replaced every run, ordered by `(entity, other)` with all Enter/Stay 
 
 ### Queries
 
-`PhysicsQueries` is implemented for `hecs::World`; import it with `use engine::physics::PhysicsQueries`. Every query honours layers (`layer_mask: u32`, `u32::MAX` = everything); triggers are skipped unless you use a `QueryFilter` with `.with_triggers()`.
+`PhysicsQueries` is implemented for `hecs::World`; import it with `use dust_engine::physics::PhysicsQueries`. Every query honours layers (`layer_mask: u32`, `u32::MAX` = everything); triggers are skipped unless you use a `QueryFilter` with `.with_triggers()`.
 
 ```rust
 let hit: Option<Hit> = world.raycast(origin, Vec3::NEG_Y, 100.0, u32::MAX);   // nearest
@@ -582,7 +582,7 @@ Call it once per fixed step with the displacement you want (velocity * dt, gravi
 
 ## Audio
 
-`engine::audio::AudioContext` wraps `rodio` (with its `symphonia-all`
+`dust_engine::audio::AudioContext` wraps `rodio` (with its `symphonia-all`
 feature, which already decodes WAV/OGG/MP3/FLAC — no extra dependency
 needed) behind a small, purpose-specific API:
 
@@ -645,7 +645,7 @@ changes). The same API runs natively and on the web backend.
 ```rust
 use std::path::Path;
 
-use engine::audio::AudioContext;
+use dust_engine::audio::AudioContext;
 
 fn start_music(drums: Vec<f32>, pad: Vec<f32>) -> anyhow::Result<AudioContext> {
     let mut audio = AudioContext::new()?; // Err if there is no output device
@@ -672,7 +672,7 @@ chain; the track starts when the handle is dropped, so the gain you chain
 applies before any sound plays. `set_track_gain`, `fade_track`,
 `set_track_muted`, `stop_track`, `has_track`, `track_names` and
 `track_position` work by name. **Call `audio.update()` once per frame** or
-fades never advance. `play_music_*` use the track named `engine::audio::MUSIC_TRACK`
+fades never advance. `play_music_*` use the track named `dust_engine::audio::MUSIC_TRACK`
 (`"music"`) and `play_music_layer_samples` uses `LAYER_TRACK` (`"layer"`).
 For tests, `AudioEngine::with_manual_time(NullBackend::new())` plus
 `advance(dt)` runs the same logic with no device. The web backend has only
@@ -680,7 +680,7 @@ been type-checked, never built.
 
 ## Spatial audio and mixer
 
-Everything below lives in `engine::audio` and works on any backend; with
+Everything below lives in `dust_engine::audio` and works on any backend; with
 `NullBackend` it runs with no device (use `AudioEngine::with_manual_time`).
 
 ### Mixer buses
@@ -779,7 +779,7 @@ Bus strips (vertical fader, M, S, resulting gain) and one row per named track
 when the backend reports `track_level` (native); otherwise the panel shows
 gains only. Edits apply to the engine immediately and are also returned;
 `state.queue.push(MixerEdit::BusGain { .. })` feeds an edit in from code. Call
-it from a host tab (the module docs of `engine::audio` show the full
+it from a host tab (the module docs of `dust_engine::audio` show the full
 `ShellHost::tab_ui` wiring):
 
 ```rust
@@ -874,7 +874,7 @@ drawn as UI on top of it, so it stays native to the posterize/dither retro
 look instead of reading as a crisp modern overlay.
 
 ```rust
-// engine::screen_effect
+// dust_engine::screen_effect
 pub struct ScreenEffectSpec {
     pub color: [f32; 3],
     pub strength: f32,        // peak tint strength, 0..1
@@ -918,7 +918,7 @@ own render color) and "Level Exit" flashes white alongside its level swap.
 
 ## Characters and AI
 
-`engine::pathfinding::NavGrid` bakes a walkability grid (XZ plane, default
+`dust_engine::pathfinding::NavGrid` bakes a walkability grid (XZ plane, default
 cell size `0.5`) from every **static** (no `RigidBody`), non-trigger
 `Collider` in the world — `Sandbox::apply_level` calls
 `NavGrid::bake(&self.world, 0.5)` once per level load, after every other
@@ -930,7 +930,7 @@ walls/pillars still block correctly. `NavGrid::find_path(start, goal)` runs
 two blocked orthogonal cells) and returns waypoint centers in world space,
 or `None` if unreachable.
 
-`engine::ai` is the character framework, deliberately reusing existing
+`dust_engine::ai` is the character framework, deliberately reusing existing
 systems rather than building parallel ones — feedback goes through
 `ScreenEffectState`/`CameraShakeState`, dialogue/health through `HudState`,
 and death particles through `spawn_burst_at`:
@@ -942,7 +942,7 @@ and death particles through `spawn_burst_at`:
   move speed, wander radius, sight range, and combat fields `damage`/
   `attack_range`/`attack_cooldown_secs`, `damage: None` meaning the
   character never attacks). Round-tripped into
-  `engine::level::CharacterInstance`.
+  `dust_engine::level::CharacterInstance`.
 - **`CharacterBrain`** — runtime-only state machine (`Idle`/`Wandering`/
   `Chasing`/`Fleeing`/`Attacking`), never serialized. Perception is a plain
   distance check against the player's position (not a line-of-sight
@@ -963,7 +963,7 @@ and death particles through `spawn_burst_at`:
   is set and a small bottom-center `draw_dialogue_choices` overlay lists them
   with number-key hints; pressing **1**-**9** jumps to the chosen node's
   target and shows its text as a toast, same as a normal advance.
-- **`engine::ai::step(world, dt, player_position, nav_grid) ->
+- **`dust_engine::ai::step(world, dt, player_position, nav_grid) ->
   Vec<AiEvent>`** — advances every `CharacterBrain`'s perception/state/
   steering (writes horizontal `RigidBody.velocity`; physics' existing
   gravity/collision handles the rest, same as the player), then scans every
@@ -974,7 +974,7 @@ and death particles through `spawn_burst_at`:
   death feedback first.
 
 **Game-side wiring** (`games/*/src/main.rs`, same shape in both games):
-`Game::update`'s Play-mode block calls `engine::ai::step` right after
+`Game::update`'s Play-mode block calls `dust_engine::ai::step` right after
 `update_player_input` (steering decided before `physics::step` applies it
 that same frame, the same ordering `update_player_input` itself uses), then
 handles the returned events — `AttackedPlayer` damages the player's
@@ -989,13 +989,13 @@ a character with `Dialogue` shows/advances its next line as a toast; a
 only player-facing damage source in this vertical slice — there's no
 dedicated attack input, so the interact key doubles as a melee hit).
 
-A placed character is authored as `engine::level::CharacterInstance` — a
+A placed character is authored as `dust_engine::level::CharacterInstance` — a
 sibling list on `Level` (`Level.characters`) like `RigInstance`/
 `LevelLight`, since a character's shape doesn't fit `LevelObject`'s generic
 mesh/texture/trigger schema. `Sandbox::spawn_character` spawns it as a
 cube — a sphere `Collider` (matching the player's own convention) +
 `RigidBody` (an ordinary dynamic body, no special-casing needed in
-`engine::physics`) + `CharacterMeta`/`CharacterBrain`, plus `Health`/
+`dust_engine::physics`) + `CharacterMeta`/`CharacterBrain`, plus `Health`/
 `Dialogue` if the instance was authored with combat/dialogue. The cube is
 solid-`color`-filled by default; setting `CharacterMeta::texture_path`
 (mirroring `LevelObjectMeta::texture_path`) wraps it in a texture instead —
@@ -1023,14 +1023,14 @@ gate), a `Passive` "Tunnel Crawler" wandering the tunnels corridor, and a
 
 ## Spawners
 
-A placed periodic spawner (`engine::level::SpawnerInstance`, a sibling list
+A placed periodic spawner (`dust_engine::level::SpawnerInstance`, a sibling list
 on `Level` like `LevelLight`/`CharacterInstance`) periodically spawns copies
-of a `CharacterInstance` template around its own position. `engine::ai::SpawnerConfig`/
+of a `CharacterInstance` template around its own position. `dust_engine::ai::SpawnerConfig`/
 `SpawnerState` hold the authored config (interval, max alive, an optional
 total-spawned cap, spawn radius) and runtime bookkeeping (elapsed time,
-which spawned entities are still alive); `engine::ai::step_spawners(world,
+which spawned entities are still alive); `dust_engine::ai::step_spawners(world,
 dt) -> Vec<SpawnRequest>` ticks every spawner and — mirroring `ai::step`'s
-"return events, let the caller act" contract, since `engine::ai` has no `gl`
+"return events, let the caller act" contract, since `dust_engine::ai` has no `gl`
 access to actually spawn a GPU-backed entity — emits a `SpawnRequest` when
 it's time. `Game::update` calls `step_spawners` right after the main
 `ai::step` block and fulfills each request via `Sandbox::spawn_character`,
@@ -1047,7 +1047,7 @@ original wanders off or is defeated.
 
 ## Animation
 
-`engine::animation` gives level objects procedural motion — two kinds, not a
+`dust_engine::animation` gives level objects procedural motion — two kinds, not a
 full keyframe/timeline system:
 
 ```rust
@@ -1062,7 +1062,7 @@ pub fn step(world: &mut hecs::World, dt: f32);
 `Animator` recomputes `Transform` from a **fixed base pose** (`base_position`/
 `base_rotation`) plus `kind` and `elapsed` every call — it never mutates the
 transform incrementally, so the motion can't drift. `Sandbox::update` calls
-`engine::animation::step` unconditionally, in both Edit and Play mode — a
+`dust_engine::animation::step` unconditionally, in both Edit and Play mode — a
 live preview while editing costs nothing extra and is a nice default (try
 it: the shipped default level's "Orbiting Cube" spins continuously, visible
 right away without entering Play mode).
@@ -1073,7 +1073,7 @@ mode, with no special-casing needed: the physics collision loop already
 checks every `Collider` regardless of `RigidBody` presence, so a static
 animated object is a free kinematic mover.
 
-`engine::level::AnimationSpec` mirrors `AnimationKind` (serializable) and
+`dust_engine::level::AnimationSpec` mirrors `AnimationKind` (serializable) and
 `LevelObject.animation: Option<AnimationSpec>` (`#[serde(default)]`) saves it
 with the level. `spawn_level_object` attaches an `Animator` when present,
 using the object's authored transform as the base pose. **Important:**
@@ -1111,14 +1111,14 @@ hitting Play in a normal game engine:
   on Stop.
 - An invisible player (a sphere `Collider` + `RigidBody` + `PlayerController`,
   no mesh) spawns above the level and falls onto whatever's there. The camera
-  becomes `engine::camera::FirstPersonCamera`, positioned at the player's
+  becomes `dust_engine::camera::FirstPersonCamera`, positioned at the player's
   `Transform::position` plus a fixed eye-height offset each frame, plus an
   optional walking view-bob (see below).
 - **WASD** moves relative to look direction, **mouse** looks freely, **Space**
   jumps when `RigidBody::grounded` is true, **E** interacts. A connected
   **gamepad** blends in automatically — see "Gamepad support" below.
 
-**Head bob** (`engine::camera::HeadBob`): a vertical bob plus a lighter
+**Head bob** (`dust_engine::camera::HeadBob`): a vertical bob plus a lighter
 side-to-side sway, added to the eye position in `player_eye_position`. It's
 driven by *actual* horizontal speed and `grounded` (updated once per frame
 in `update_player_input`, right where movement velocity is set), not just
@@ -1129,7 +1129,7 @@ no-op with zero per-frame cost. Toggle and tune `enabled`/`amplitude`/
 `sway_amplitude`/`cycles_per_unit` live in the F1 panel's **Camera**
 section — a play-session setting, not saved with the level or profile.
 
-**Three more `engine::camera` FX**, all applied the same way (added into
+**Three more `dust_engine::camera` FX**, all applied the same way (added into
 `player_eye_position` or written onto `fp_camera` each frame in
 `update_player_input`), each an `enabled` toggle plus a couple of tuning
 fields, live-editable in the same F1 **Camera** section:
@@ -1137,7 +1137,7 @@ fields, live-editable in the same F1 **Camera** section:
 - **`LandingDip`** — a critically-damped spring, kicked downward by
   `land(fall_speed)` the exact frame `RigidBody::grounded` transitions
   false→true (detected in `Game::update`, right around the
-  `engine::physics::step` call — landing zeroes out `velocity.y` as part of
+  `dust_engine::physics::step` call — landing zeroes out `velocity.y` as part of
   collision resolution, so the fall speed has to be captured *before*
   `step` runs), then `update(dt)`'d every frame regardless of grounded
   state so it always settles back to rest rather than getting stuck.
@@ -1151,8 +1151,8 @@ fields, live-editable in the same F1 **Camera** section:
   never fights with a game's own ability/zoom logic that might want to set
   a different base FOV outright.
 
-**`CameraShakeSpec`/`CameraShakeState`** (also `engine::camera`): a
-momentary jitter, mirroring `engine::screen_effect::ScreenEffectSpec`'s
+**`CameraShakeSpec`/`CameraShakeState`** (also `dust_engine::camera`): a
+momentary jitter, mirroring `dust_engine::screen_effect::ScreenEffectSpec`'s
 role but for the eye position instead of a color tint — a few
 incommensurate sine waves rather than a `rand` dependency, decaying
 linearly to zero over `duration_secs`. Fireable three ways, all converging
@@ -1169,7 +1169,7 @@ Shake** section (Add/Preview/Clear), right under **Screen Effect**.
 `resume` flip a `paused: bool` (only meaningful while `mode ==
 EditorMode::Play`) and release/re-capture the mouse so a real cursor can
 click the pause menu's buttons (relative mouse mode otherwise swallows
-clicks as look-deltas). `engine::ui::draw_pause_menu` — a small, stateless
+clicks as look-deltas). `dust_engine::ui::draw_pause_menu` — a small, stateless
 function in the same spirit as `draw_hud`, just returning whichever button
 was clicked — draws a centered **Resume** / **Exit to Editor** / **Quit
 Game** window.
@@ -1198,7 +1198,7 @@ deliberately left out: a debug build boots straight into the dev-time
 level editor by design, and a menu you have to click through on every
 launch would fight that workflow (a release build already skips it,
 straight to Play — see "Exporting a game" below). The pause menu
-demonstrates the same reusable `engine::ui` modal-overlay pattern a title
+demonstrates the same reusable `dust_engine::ui` modal-overlay pattern a title
 or game-over screen would reuse — add one the same way once a game built
 on this engine actually needs it.
 
@@ -1220,7 +1220,7 @@ extension points:
 
 ## Gamepad support
 
-`engine::input::Input` mirrors its keyboard down/just-pressed/just-released
+`dust_engine::input::Input` mirrors its keyboard down/just-pressed/just-released
 pattern for a controller: `left_stick()`/`right_stick() -> (f32, f32)` (each
 axis `-1.0..=1.0`, deadzoned), `controller_button_down`/
 `controller_just_pressed(sdl2::controller::Button) -> bool`. Only **one**
@@ -1260,8 +1260,8 @@ interpreter, no `legacy-pss` feature and no standalone script editor any
 more. Full design, measurements and limits: **`docs/SCRIPTING-OXIDIZED.md`**.
 
 How a script runs: `foo.ox` -> `oxidized build` -> Rust -> `rustc --crate-type
-cdylib` -> loaded with `libloading` -> wrapped as an `engine::behavior::Behavior`
-(`engine::script::ox::OxBehavior`). Builds are cached on disk by content hash
+cdylib` -> loaded with `libloading` -> wrapped as an `dust_engine::behavior::Behavior`
+(`dust_engine::script::ox::OxBehavior`). Builds are cached on disk by content hash
 (`<asset root>/.ox-build`, git-ignored): a cold build is ~1-6 s, an unchanged
 script loads instantly. Saving a script while the game runs rebuilds it on a
 worker thread and live-swaps every entity using it, keeping per-entity state; a
@@ -1301,7 +1301,7 @@ HUD/camera `hud_bar toast camera_shake`; math `sin cos tan atan2 clamp lerp pi t
 ### `Behavior`/`ScriptApi` — using Rust the same way a script would
 
 ```rust
-// engine::behavior
+// dust_engine::behavior
 pub trait ScriptApi {
     fn log(&mut self, message: &str);
     fn position(&self) -> (f32, f32, f32);
@@ -1327,7 +1327,7 @@ pub struct BehaviorSlot(pub Box<dyn Behavior>);  // the ECS component
 
 `OxBehavior` implements `Behavior` by calling the compiled script's hooks.
 Crucially, **a plain Rust type can implement `Behavior` directly** — see
-`engine::behavior::NativeBobBehavior` — and gets attached to an entity via the
+`dust_engine::behavior::NativeBobBehavior` — and gets attached to an entity via the
 exact same `BehaviorSlot` component. The game dispatches through the `Behavior`
 trait uniformly and never needs to know whether a given entity's logic came
 from a script or from compiled Rust: **prototype as a script, port to native
@@ -1340,7 +1340,7 @@ identical sine-bob motion + interact log/tone — one from a script, one from
 compiled Rust. The native one is a compiled-in demo, not saved level data
 (`NativeBehaviorDemoMarker` tells `build_level_from_ecs` to skip it).
 
-### Runtime wiring (`games/*/src/main.rs`, `engine::script::ox::OxScripts`)
+### Runtime wiring (`games/*/src/main.rs`, `dust_engine::script::ox::OxScripts`)
 
 - `LevelObject.script: Option<PathBuf>` points at an `.ox` file relative to the
   asset root (`scripts/bob_demo.ox`). `Game::make_script_behavior` asks
@@ -1377,7 +1377,7 @@ dedicated script editor app.
 
 ## Character rigs
 
-`engine::rig` gives level objects skeletal-*ish* animation using the classic
+`dust_engine::rig` gives level objects skeletal-*ish* animation using the classic
 PS1/PS2-era technique: a character is several separate rigid meshes (torso,
 head, arms, legs) parented in a hierarchy, each moving as a whole — **not**
 per-vertex skin deformation. Joints don't bend smoothly (a raised arm is a
@@ -1390,7 +1390,7 @@ weight-painting tool.
 ### Data shapes
 
 ```rust
-// engine::rig — a reusable character definition, its own `rigs/*.ron` files
+// dust_engine::rig — a reusable character definition, its own `rigs/*.ron` files
 pub struct RigPartDef { pub name: String, pub parent: Option<String>, pub mesh: MeshSource, pub texture_path: Option<PathBuf>, pub local_position: [f32; 3], pub local_rotation_euler_deg: [f32; 3], pub scale: [f32; 3] }
 pub struct Keyframe { pub time: f32, pub rotation_euler_deg: [f32; 3] }
 pub struct JointTrack { pub joint_name: String, pub keyframes: Vec<Keyframe> }
@@ -1419,7 +1419,7 @@ live `Transform`.
 
 Two systems, both run unconditionally every frame from `Game::update`
 (Edit and Play mode, same "live preview" philosophy as
-`engine::animation::step`):
+`dust_engine::animation::step`):
 
 - `step_rig_animation` advances each playing `RigAnimator`'s clock
   (wrapping or clamping against the clip's `duration`) and **slerps**
@@ -1462,7 +1462,7 @@ The level editor panel gains a **Rigs** section, below Scene Objects:
   with the drag-values, click **Set Keyframe Here**, scrub to the next
   time, repeat, **Save Rig**.
 
-`engine::level::RigInstance` (a *placement*: name, `rig_path`, position,
+`dust_engine::level::RigInstance` (a *placement*: name, `rig_path`, position,
 rotation, which clip is playing) is a sibling list on `Level` —
 `Level.rig_instances`, the same pattern as `Level.lights` — since a rig is
 structurally a multi-entity hierarchy, not a single mesh like
@@ -1492,7 +1492,7 @@ blend; nothing else needed it (the "Time (scrub)" slider still snaps
 `time` directly within one clip — scrubbing is meant to jump exactly
 where you drag it, not ease into it). Since a full blend finishes inside
 0.2 seconds, verifying the interpolation visually frame-by-frame isn't
-practical — see `engine::rig`'s `play_clip_blends_smoothly_instead_of_popping`
+practical — see `dust_engine::rig`'s `play_clip_blends_smoothly_instead_of_popping`
 unit test for the actual verification: it steps the simulation at fixed
 `dt`s and asserts the sampled rotation sits at the old pose right at the
 switch, at the slerp midpoint halfway through the blend window, and
@@ -1500,9 +1500,9 @@ exactly at the new pose once it's elapsed.
 
 ## Object classes
 
-`engine::class` lets many placed objects share one definition — a
+`dust_engine::class` lets many placed objects share one definition — a
 **class** — instead of duplicating mesh/texture/scale/physics/animation/
-script settings on every instance by hand. It mirrors `engine::profile`'s
+script settings on every instance by hand. It mirrors `dust_engine::profile`'s
 save/load pattern exactly, its own `classes/*.ron` folder:
 
 ```rust
@@ -1548,7 +1548,7 @@ copy — from then on it's a plain object again).
 
 ## Skybox
 
-A simple vertical-gradient sky, drawn as `engine::renderer::SkyboxPass` —
+A simple vertical-gradient sky, drawn as `dust_engine::renderer::SkyboxPass` —
 no cubemap or dome mesh. It reuses the fullscreen-triangle trick already
 in `post.rs`'s `CompositePass`: a single triangle covering the whole
 screen via `gl_VertexID`, no vertex buffer needed. The fragment shader
@@ -1570,7 +1570,7 @@ gradient.
 
 ## Particle effects
 
-`engine::particles` is a small, non-instanced particle system — each live
+`dust_engine::particles` is a small, non-instanced particle system — each live
 particle is one draw call, deliberately simple and PS2-chunky rather than
 built for thousands of particles at once (easy to swap for instancing
 later if a scene needs that).
@@ -1591,13 +1591,13 @@ pub struct ParticleEmitterDef {
 A `ParticleEmitter` runtime component owns a `Vec<Particle>` pool and a
 tiny hand-rolled xorshift32 PRNG (seeded from the OS via
 `std::hash::RandomState` — no `rand` dependency for something this small).
-`engine::particles::step(world, dt) -> Vec<Entity>` ages/culls particles,
+`dust_engine::particles::step(world, dt) -> Vec<Entity>` ages/culls particles,
 auto-emits for continuous emitters (`rate_per_sec > 0`), and returns
 one-shot burst emitters (`rate_per_sec <= 0`) that have gone empty, so
 `Game::update` can despawn them — this is how a triggered burst cleans
 itself up without becoming permanent level clutter.
 
-Rendering (`engine::renderer::ParticlePass`) draws each particle as a
+Rendering (`dust_engine::renderer::ParticlePass`) draws each particle as a
 camera-facing billboarded quad (`mesh::primitives::quad()`), rotation
 taken from the camera's world-space orientation (extracted from the
 inverse view matrix), with GL blending enabled around just this pass — the
@@ -1616,7 +1616,7 @@ age out and clean themselves up.
 
 ## In-game HUD
 
-`engine::hud::HudState` is deliberately tiny — a title, named progress
+`dust_engine::hud::HudState` is deliberately tiny — a title, named progress
 bars, and fading toast messages:
 
 ```rust
@@ -1637,7 +1637,7 @@ impl HudState {
 > `HudState` still feeds them. `draw_hud`/`draw_pause_menu` stay for
 > `walkaround_demo` and `mushroom_man`, which still draw them by hand.
 
-`engine::ui::draw_hud(ctx, hud)` renders it as a fixed top-left
+`dust_engine::ui::draw_hud(ctx, hud)` renders it as a fixed top-left
 `egui::Area` — title, each bar as an `egui::ProgressBar`, toasts stacked
 below and fading out as their remaining time runs low. The sandbox calls
 it from `Game::render`'s egui closure **gated to Play mode only** — the
@@ -1660,7 +1660,7 @@ from each call site.
 
 The above is *content* (what the HUD shows); its *look* — position, bar
 width/color, title size, toast color — is a separate, editable
-`engine::hud::HudStyle`:
+`dust_engine::hud::HudStyle`:
 
 ```rust
 pub struct HudStyle {
@@ -1672,7 +1672,7 @@ pub struct HudStyle {
 }
 ```
 
-It's bundled directly into `engine::profile::RenderParams` (a `hud:
+It's bundled directly into `dust_engine::profile::RenderParams` (a `hud:
 HudStyle` field, `#[serde(default)]` so profiles saved before this field
 existed keep their old look) rather than living in its own file — this
 means it's saved/loaded/cycled with the rest of a `ShaderProfile`
@@ -1680,7 +1680,7 @@ automatically, no separate plumbing needed. `draw_hud`'s signature is
 `draw_hud(ctx, hud, style)`; call it with `&self.render_params.hud`.
 
 **F1 panel**: a **"HUD"** section right under "Render Params" —
-`engine::ui::hud_style_editor(ui, &mut style)` draws drag values for the
+`dust_engine::ui::hud_style_editor(ui, &mut style)` draws drag values for the
 anchor offset, a slider for bar width, color pickers for the bar fill and
 toast text, and a slider for title font size. Like Render Params, changes
 apply live (you'll see it update in Play mode immediately) and are
@@ -1696,7 +1696,7 @@ for both screens: nothing in its Rust code draws them.
 
 1. The game keeps its documents in `<asset root>/assets/ui/` (sandbox:
    `games/sandbox/assets/ui/hud.ron`, `pause_menu.ron`) and loads each with
-   `engine::ui_designer::UiScreen::load(name, path, fallback)` at startup. A
+   `dust_engine::ui_designer::UiScreen::load(name, path, fallback)` at startup. A
    missing or invalid file falls back to `examples::hud_doc()` /
    `pause_menu_doc()` and logs a warning; it never aborts the game.
 2. Every frame the game calls `screen.poll()` (one `stat`), publishes its state
@@ -1766,7 +1766,7 @@ game (sandbox: `<asset root>/.editor`), so settings are per game, not per user.
 
 ## Save/load (checkpoints)
 
-`engine::save` is intentionally small — a single gameplay checkpoint, not a
+`dust_engine::save` is intentionally small — a single gameplay checkpoint, not a
 full save-file system:
 
 ```rust
@@ -1815,14 +1815,14 @@ reconstruct "which level should be active," just where you were standing.
 
 ## Scripted smoke tests
 
-`engine::app::App::run_scripted` is a separate loop from `App::run` (not a
+`dust_engine::app::App::run_scripted` is a separate loop from `App::run` (not a
 flag on it, so the production path stays completely untouched) that drives
 a game with an Oxidized script instead of a human — a real SDL2
 window still opens (there's no headless mode in this engine). Each frame,
 after polling real SDL events (so window-close still works), it calls the
 script's `fn tick(frame: Int, t: Float)` once (`frame` counts calls from 0,
 `t` is `ctx.time.elapsed`). The script is compiled with the **smoke** profile
-(`engine::script::ox::SmokeDriver`, spec in `build/spec.rs::SMOKE_SPEC`), whose
+(`dust_engine::script::ox::SmokeDriver`, spec in `build/spec.rs::SMOKE_SPEC`), whose
 whole "standard library" is:
 
 - **`press(key_name)`** / **`release(key_name)`** — queues a synthetic SDL
@@ -1863,7 +1863,7 @@ cargo run -p mushroom_man -- --smoke-test scripts/smoke/talk_to_sprite.ox
 
 ## Multiplayer
 
-`engine::net` adds listen-server multiplayer — one player's own instance
+`dust_engine::net` adds listen-server multiplayer — one player's own instance
 hosts (`NetHost`), 2-4 total players connect directly over LAN
 (`NetClient`), full world state syncs so everyone sees the same AI
 characters, physics props, dialogue, and level transitions. No dedicated
@@ -1874,14 +1874,14 @@ alongside everything else in the engine's single-threaded frame loop.
 **Transport & framing**: length-prefixed `bincode` frames (`u32` LE length
 + payload) over TCP — TCP's head-of-line blocking is a non-issue at LAN
 latencies and a 20Hz snapshot rate, and its built-in ordering/reliability
-is free, so there's no hand-rolled UDP netcode. `engine::net::framing::NetConnection`
+is free, so there's no hand-rolled UDP netcode. `dust_engine::net::framing::NetConnection`
 wraps one `TcpStream`: reads accumulate into a buffer (`WouldBlock` just
 means "nothing more this frame," not an error) and drain complete frames,
 leaving any trailing partial frame for next frame; writes queue into a
 `VecDeque<Vec<u8>>` and drain opportunistically, so a send never blocks.
 Same "poll once per frame, never block" contract as `HotReloadWatcher::poll_events`.
 
-**Protocol** (`engine::net::protocol`): `ClientMessage::{Hello, Input,
+**Protocol** (`dust_engine::net::protocol`): `ClientMessage::{Hello, Input,
 Interact, DialogueChoice, Disconnect}` and `ServerMessage::{Welcome,
 Reject, PlayerJoined, PlayerLeft, CharacterSpawned, Snapshot, Dialogue,
 DialogueClosed, LevelTransition}`. `Hello`/`Welcome` carry a
@@ -1947,12 +1947,12 @@ A client's own `fp_camera.yaw`/`pitch` still update instantly and locally
 (pure view direction, nothing to reconcile).
 
 **Join flow**: host clicks **Host Game** (new multiplayer panel, drawn
-alongside the pause menu — `engine::ui::draw_multiplayer_panel`) →
-`NetHost::bind(engine::net::DEFAULT_PORT)`. A joiner types `IP:port`,
+alongside the pause menu — `dust_engine::ui::draw_multiplayer_panel`) →
+`NetHost::bind(dust_engine::net::DEFAULT_PORT)`. A joiner types `IP:port`,
 clicks **Join** → `NetClient::connect` (one bounded ~2s blocking call on
 the button click, not per-frame — an acceptable one-time hitch). The
 client sends `Hello`; the host checks `PROTOCOL_VERSION` and
-`engine::net::MAX_PLAYERS` (4), assigns a `NetId`, spawns a visible
+`dust_engine::net::MAX_PLAYERS` (4), assigns a `NetId`, spawns a visible
 `RemotePlayer`-tagged avatar (`Sandbox::spawn_remote_player_at` — same
 physical shape as the local player plus a cube `MeshRenderer`, since a
 remote player needs to actually be seen), and replies `Welcome` with the
@@ -1991,7 +1991,7 @@ camera-shake) since those are tied to what the *host's* own screen is
 showing, not a remote player's.
 
 **AI perception is aware of every connected player**, not just the
-host's own local one: `engine::ai::step` takes `player_positions: &[(Entity,
+host's own local one: `dust_engine::ai::step` takes `player_positions: &[(Entity,
 Vec3)]` — the host's own local player plus every `remote_players` entity
 — and each character reacts to whichever one is physically nearest,
 recomputed every call so retargeting mid-chase (or mid-attack-cooldown)
@@ -2092,10 +2092,10 @@ game, **Esc** to pause in one, click **Host Game**, then in the other type
 > workspace runs its frame through a `Schedule` yet. The games still hand-order
 > work in `Game::update`.
 
-`engine::resources::Resources` is a typed singleton map — at most one value per
+`dust_engine::resources::Resources` is a typed singleton map — at most one value per
 Rust type, keyed by `TypeId`. `get`/`get_mut`/`remove` return `Option`;
 `require`/`require_mut` panic with a message naming the missing type.
-`engine::schedule::Schedule` is a registry of named systems. A system is a
+`dust_engine::schedule::Schedule` is a registry of named systems. A system is a
 `fn` or closure taking a `SystemCtx { world, resources, dt }`; the schedule
 decides when each runs:
 
@@ -2113,10 +2113,10 @@ game keeps its `World` and `Resources` and calls `schedule.run(..)` from its
 own `update`, moving one feature at a time.
 
 ```rust
-use engine::ecs::{Transform, World};
-use engine::glam::Quat;
-use engine::resources::Resources;
-use engine::schedule::{Schedule, Stage, SystemCtx};
+use dust_engine::ecs::{Transform, World};
+use dust_engine::glam::Quat;
+use dust_engine::resources::Resources;
+use dust_engine::schedule::{Schedule, Stage, SystemCtx};
 
 struct Score(u32);
 
@@ -2171,7 +2171,7 @@ duplicate error instead of panicking like `add_system`.
 > spawn/age/despawn bookkeeping; none has been ported (see
 > [docs/ROADMAP.md](docs/ROADMAP.md)).
 
-`engine::effects` moves "spawn something short-lived, shrink it, despawn it"
+`dust_engine::effects` moves "spawn something short-lived, shrink it, despawn it"
 and "swap a texture, remember the old one" into ECS components:
 
 - `Lifetime { age, max }` — the entity is despawned by `effects::tick` when
@@ -2190,11 +2190,11 @@ and "swap a texture, remember the old one" into ECS components:
 ```rust
 use std::sync::Arc;
 
-use engine::ecs::{Entity, MeshRenderer, Transform, World};
-use engine::effects::{self, Fade, FadeCurve, Lifetime};
-use engine::glam::Vec3;
-use engine::mesh::GpuMesh;
-use engine::texture::GpuTexture;
+use dust_engine::ecs::{Entity, MeshRenderer, Transform, World};
+use dust_engine::effects::{self, Fade, FadeCurve, Lifetime};
+use dust_engine::glam::Vec3;
+use dust_engine::mesh::GpuMesh;
+use dust_engine::texture::GpuTexture;
 
 // A dash ghost: shrinks over 0.4 s, then despawns itself.
 fn spawn_ghost(world: &mut World, mesh: Arc<GpuMesh>, tex: Arc<GpuTexture>, at: Vec3) -> Entity {
@@ -2230,7 +2230,7 @@ individually if you need a different order.
 
 > **Status.** Implemented and unit-tested; not yet used by a game.
 
-`engine::tunables::Tunables` loads a flat RON map of name → value
+`dust_engine::tunables::Tunables` loads a flat RON map of name → value
 (`{ "music.near": 12.0, "ghost.life": 4, "debug.god": true, "music.track": "a" }`)
 and lets you retune a running game: getters (`f32`, `i64`, `bool`, `string`)
 take a compiled-in default and never fail — a missing name or wrong type
@@ -2240,9 +2240,9 @@ frame) or `reload_if_touched(paths)` (feed it `HotReloadWatcher::poll_events`)
 reloads; a file that fails to parse keeps the old values and sets
 `last_error()`; `changes()` / `take_changes()` list what moved.
 `Tunables::for_build(path)` ignores the file in release builds unless the
-`JAME_TUNABLES` env var is set, so players can't retune a shipped game.
+`DUST_TUNABLES` env var is set, so players can't retune a shipped game.
 
-`engine::telemetry::Telemetry` is the balance-CSV hook: `record(event,
+`dust_engine::telemetry::Telemetry` is the balance-CSV hook: `record(event,
 &[(field, f64)])` appends rows, writing an `event,<fields>` header the first
 time an event name (or its field list) appears. Output is buffered (`flush()`
 or drop). `Telemetry::from_env(var)` is disabled unless the variable is set, and
@@ -2250,13 +2250,13 @@ a disabled hook costs one branch per call. IO errors disable it rather than
 panic.
 
 ```rust
-use engine::telemetry::Telemetry;
-use engine::tunables::Tunables;
+use dust_engine::telemetry::Telemetry;
+use dust_engine::tunables::Tunables;
 
 // assets/tunables.ron:   { "music.near": 12.0, "ghost.life": 0.4, "debug.god": false }
 fn setup() -> (Tunables, Telemetry) {
     (
-        // Debug builds (or JAME_TUNABLES set) read the file; release uses the defaults below.
+        // Debug builds (or DUST_TUNABLES set) read the file; release uses the defaults below.
         Tunables::for_build("assets/tunables.ron"),
         // Disabled unless MYGAME_BALANCE=path/to/balance.csv is set.
         Telemetry::from_env("MYGAME_BALANCE"),
@@ -2285,7 +2285,7 @@ fn each_frame(tun: &mut Tunables, tel: &mut Telemetry, t: f32, hp: f32) {
 > **Status.** Implemented and unit-tested (including a headless input
 > source); the games' own input code does not use it yet.
 
-`engine::input_map` lets you name an *action* once and bind it to devices in
+`dust_engine::input_map` lets you name an *action* once and bind it to devices in
 data. A map is RON — see the fully commented `docs/examples/input_map.ron`:
 
 ```ron
@@ -2301,7 +2301,7 @@ data. A map is RON — see the fully commented `docs/examples/input_map.ron`:
 
 Bindings are `Key`, `Mouse`, `PadButton`, `PadAxis`, `Pair` (1-D, e.g. Q/E),
 `Composite` (WASD-style vec2) and `Stick` (radial deadzone). `ActionState` is
-resolved once per frame from any `InputSource` (`engine::input::Input` and
+resolved once per frame from any `InputSource` (`dust_engine::input::Input` and
 `headless::HeadlessInput` both implement it) and answers `pressed`,
 `just_pressed`, `just_released`, `axis` and `vec2` by action name; unknown
 actions read as idle. Contexts are layers: an enabled `exclusive` context mutes
@@ -2311,8 +2311,8 @@ vec2 uses +y up.
 ```rust
 use std::path::Path;
 
-use engine::input::Input;
-use engine::input_map::{ActionMap, ActionState};
+use dust_engine::input::Input;
+use dust_engine::input_map::{ActionMap, ActionState};
 
 struct Controls {
     map: ActionMap,
@@ -2360,8 +2360,8 @@ differ from the shipped defaults) and layered back with `load_layered`.
 > on a real GL context**, no game or editor draws a skinned mesh yet, there is
 > no GPU-skinning path, and glTF import reads the first skin only.
 
-`engine::skeletal` is separate from the older `engine::rig` (rigid parts) and
-`engine::animation` (orbit/bob). Layers, bottom up: `pose` (joint transforms,
+`dust_engine::skeletal` is separate from the older `dust_engine::rig` (rigid parts) and
+`dust_engine::animation` (orbit/bob). Layers, bottom up: `pose` (joint transforms,
 shortest-arc blending, additive layers), `skeleton` (hierarchy, bind pose,
 inverse-bind, joint palette), `clip` (keyframed `AnimationClip`s, optional root
 motion), `animator` (`AnimatorController` asset + `SkeletalAnimator`
@@ -2378,10 +2378,10 @@ and `dt`, so a fixed `dt` sequence gives bit-identical output.
 use std::path::Path;
 use std::sync::Arc;
 
-use engine::ecs::{Transform, World};
-use engine::schedule::Schedule;
-use engine::skeletal::import::load_gltf_skinned;
-use engine::skeletal::{
+use dust_engine::ecs::{Transform, World};
+use dust_engine::schedule::Schedule;
+use dust_engine::skeletal::import::load_gltf_skinned;
+use dust_engine::skeletal::{
     skeletal_animation_system, AnimationSet, AnimatorController, Compare, Condition, Motion, ParamDef,
     ParamValue, SkeletalAnimator, StateDef, TransitionDef, SKELETAL_ANIMATION_SYSTEM,
 };
@@ -2429,7 +2429,7 @@ fn drive(world: &mut World, speed: f32) {
 
 ## Headless testing
 
-`engine::headless` runs game and editor logic frame by frame with no window,
+`dust_engine::headless` runs game and editor logic frame by frame with no window,
 no GL context and no SDL video: `Headless` owns a `World`, `Resources` and a
 `Schedule` and steps them with a fixed `dt`. `with_default_systems()` adds
 `"physics"` (`Stage::PostUpdate`) and `"effects"` (`effects::tick`,
@@ -2443,9 +2443,9 @@ an `EditorState` + `EditorShell` so Play / Stop / undo can be tested too (it
 only steps the simulation while in Play).
 
 ```rust
-use engine::ecs::Transform;
-use engine::effects::Lifetime;
-use engine::headless::{EditorHeadless, Headless, HeadlessInput};
+use dust_engine::ecs::Transform;
+use dust_engine::effects::Lifetime;
+use dust_engine::headless::{EditorHeadless, Headless, HeadlessInput};
 
 #[test]
 fn lifetime_entity_expires_after_four_frames() {
@@ -2479,18 +2479,18 @@ fn editor_play_and_stop_without_a_window() {
 }
 ```
 
-`engine::script::ox::SmokeDriver` is a different tool: it drives a *running*
+`dust_engine::script::ox::SmokeDriver` is a different tool: it drives a *running*
 game from an `.ox` script (see "Scripted smoke tests").
 
 ## The docked editor
 
 The engine has two editors. The **legacy** F1/F2 panels live in each game's
 `main.rs` (see "The editor GUI"). The **docked editor** is
-`engine::editor::runtime::EditorRuntime`: a dockable window with Viewport,
+`dust_engine::editor::runtime::EditorRuntime`: a dockable window with Viewport,
 Hierarchy, Inspector, Assets, Console, Profiler, UI Designer and Settings tabs
 plus any host tabs, gizmos (move/rotate/scale), viewport picking, undo/redo,
 Play / Pause / Stop with a world snapshot, and a File menu for scenes. Nothing
-in `engine::editor` touches SDL or GL except the runtime's viewport target, so
+in `dust_engine::editor` touches SDL or GL except the runtime's viewport target, so
 the logic is testable headless.
 
 **Opening it.** The key is chosen by the host game. **F4** opens the dock in
@@ -2513,13 +2513,13 @@ scene into `target` (`Renderer::present_to(gl, rt.target.framebuffer(), ..)`),
 use std::path::PathBuf;
 
 use anyhow::Result;
-use engine::app::{Context, Game};
-use engine::ecs::World;
-use engine::editor::runtime::{EditorRuntime, NoHost};
-use engine::editor::shell::PerfSnapshot;
-use engine::editor::Registry;
-use engine::sdl2::event::Event;
-use engine::sdl2::keyboard::Keycode;
+use dust_engine::app::{Context, Game};
+use dust_engine::ecs::World;
+use dust_engine::editor::runtime::{EditorRuntime, NoHost};
+use dust_engine::editor::shell::PerfSnapshot;
+use dust_engine::editor::Registry;
+use dust_engine::sdl2::event::Event;
+use dust_engine::sdl2::keyboard::Keycode;
 
 #[derive(Clone)]
 struct Health(f32);
@@ -2659,9 +2659,9 @@ TooNew / NoMigration / failure cases) is tested in
 ```rust
 use std::path::Path;
 
-use engine::ecs::World;
-use engine::editor::scene::{Migration, Scene, SceneDocument, SceneError, SceneValue};
-use engine::editor::Registry;
+use dust_engine::ecs::World;
+use dust_engine::editor::scene::{Migration, Scene, SceneDocument, SceneError, SceneValue};
+use dust_engine::editor::Registry;
 
 // v1 -> v2: Health.hp became Health.current (+ a new Health.max).
 fn health_hp_to_current(scene: &mut Scene) -> Result<(), String> {
@@ -2751,8 +2751,8 @@ piece, rather than a truly blank slate.
 6. `cargo run -p mygame` — empty `profiles/`/`levels/` folders mean you'll
    want your own `default_demo_profiles()`/`default_level()` (or just
    hand-write one `.ron` file matching the `ShaderProfile`/`RenderParams`
-   shape in `engine::profile`, or the `Level`/`LevelObject` shape in
-   `engine::level`).
+   shape in `dust_engine::profile`, or the `Level`/`LevelObject` shape in
+   `dust_engine::level`).
 
 ## Exporting a game (shipping a standalone `.exe`)
 

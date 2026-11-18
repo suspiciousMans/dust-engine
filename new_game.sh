@@ -72,8 +72,8 @@ sed -i.bak "s/name = \"sandbox\"/name = \"$name\"/" "$dest_dir/Cargo.toml"
 
 # Rename the window title / fatal-error dialog title in the copied source.
 sed -i.bak \
-    -e "s/Jame Engine Sandbox - Error/Jame Engine $name - Error/g" \
-    -e "s/Jame Engine Sandbox/Jame Engine $name/g" \
+    -e "s/Dust Engine Sandbox - Error/Dust Engine $name - Error/g" \
+    -e "s/Dust Engine Sandbox/Dust Engine $name/g" \
     "$dest_dir/src/main.rs"
 rm -f "$dest_dir/Cargo.toml.bak" "$dest_dir/src/main.rs.bak"
 

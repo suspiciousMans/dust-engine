@@ -336,7 +336,7 @@ pub fn slope_bias_depth(texel_world: f32, depth_range: f32) -> f32 {
 }
 
 /// Total depth bias for a surface with the given `n . l` — mirrors the
-/// formula in the injected fragment shader (`jame_shadow_lit`).
+/// formula in the injected fragment shader (`dust_shadow_lit`).
 pub fn slope_scaled_bias(const_bias: f32, slope_bias: f32, n_dot_l: f32) -> f32 {
     let n = n_dot_l.clamp(0.0, 1.0);
     let tan = ((1.0 - n * n).max(0.0).sqrt() / n.max(0.05)).min(MAX_SLOPE_TAN);

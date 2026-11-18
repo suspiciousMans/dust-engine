@@ -19,9 +19,9 @@ pub enum Disposition {
 /// separate live counterpart (`damage`/`attack_range`/etc. never change
 /// during play, unlike `Health.current` or `Dialogue`'s cycling index) live
 /// directly here rather than behind a `LevelObjectMeta`-style mirror struct
-/// — the same shape as `engine::particles::ParticleEmitter`'s `def` field.
+/// — the same shape as `dust_engine::particles::ParticleEmitter`'s `def` field.
 /// Round-tripped by `build_level_from_ecs` into
-/// `engine::level::CharacterInstance` alongside `Health`/`Dialogue`.
+/// `dust_engine::level::CharacterInstance` alongside `Health`/`Dialogue`.
 #[derive(Clone, Debug)]
 pub struct CharacterMeta {
     pub name: String,
@@ -173,7 +173,7 @@ impl BrainState {
 }
 
 /// A tiny xorshift32 generator for wander-target variety — the same
-/// dependency-free approach as `engine::particles`'s private `Rng`, kept as
+/// dependency-free approach as `dust_engine::particles`'s private `Rng`, kept as
 /// its own copy since that one isn't exported.
 struct Rng(u32);
 
@@ -221,7 +221,7 @@ impl CharacterBrain {
 }
 
 /// Something `step` noticed this frame that the game needs to react to —
-/// mirrors `engine::physics::step`'s "return events, let the caller handle
+/// mirrors `dust_engine::physics::step`'s "return events, let the caller handle
 /// them" contract rather than reaching into `HudState`/`ScreenEffectState`/
 /// etc. directly from inside this module.
 pub enum AiEvent {
@@ -246,14 +246,14 @@ const FLEE_DISTANCE: f32 = 4.0;
 /// (writing horizontal `RigidBody.velocity` — physics' existing gravity/
 /// collision resolution handles the rest, same as the player), then scans
 /// every `Health` (character or player) for `is_dead()`. Actual despawn is
-/// the caller's job, mirroring `engine::particles::step`'s "returns
+/// the caller's job, mirroring `dust_engine::particles::step`'s "returns
 /// entities to despawn" contract, since the caller also needs the death
 /// position for feedback before the entity is gone.
 ///
 /// `player_positions` is every player currently in the session — in
 /// single-player that's just the one local player, but under a
 /// multiplayer host it's the local player plus every connected remote
-/// player's avatar (see `engine::net`), so hostile/passive characters
+/// player's avatar (see `dust_engine::net`), so hostile/passive characters
 /// react to whichever one is actually nearest rather than being blind to
 /// everyone but the host. Perception itself is still a plain distance
 /// check against the nearest one, not a line-of-sight raycast — a stated
@@ -426,7 +426,7 @@ pub struct SpawnerConfig {
     pub spawn_radius: f32,
 }
 
-/// Runtime state — never serialized (see `engine::level::SpawnerInstance`
+/// Runtime state — never serialized (see `dust_engine::level::SpawnerInstance`
 /// for the authored/round-trippable half `Sandbox::spawn_spawner` builds
 /// this alongside).
 pub struct SpawnerState {

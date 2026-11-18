@@ -25,7 +25,7 @@
 //! successful reload rebuilds [`Tunables::changes`] so the game can react.
 //!
 //! Shipped builds: [`Tunables::for_build`] ignores the file in release
-//! builds unless the `JAME_TUNABLES` env var is set, so players cannot
+//! builds unless the `DUST_TUNABLES` env var is set, so players cannot
 //! retune a shipped game by accident.
 
 use std::collections::BTreeMap;
@@ -99,10 +99,10 @@ impl Tunables {
         t
     }
 
-    /// [`Tunables::load`] in debug builds or when `JAME_TUNABLES` is set;
+    /// [`Tunables::load`] in debug builds or when `DUST_TUNABLES` is set;
     /// otherwise [`Tunables::defaults_only`].
     pub fn for_build(path: impl AsRef<Path>) -> Self {
-        if cfg!(debug_assertions) || std::env::var_os("JAME_TUNABLES").is_some() {
+        if cfg!(debug_assertions) || std::env::var_os("DUST_TUNABLES").is_some() {
             Self::load(path)
         } else {
             Self::defaults_only()
@@ -282,7 +282,7 @@ mod tests {
     fn tmp_dir(tag: &str) -> PathBuf {
         static N: AtomicUsize = AtomicUsize::new(0);
         let d = std::env::temp_dir().join(format!(
-            "jame_tunables_{tag}_{}_{}",
+            "dust_tunables_{tag}_{}_{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));

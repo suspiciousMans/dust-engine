@@ -220,7 +220,7 @@ impl Default for HeadBob {
 
 /// A momentary camera shake — authored on a trigger or fired from a
 /// script/native `Behavior` via `ScriptApi::camera_shake`, mirroring
-/// `engine::screen_effect::ScreenEffectSpec`'s role for full-screen color
+/// `dust_engine::screen_effect::ScreenEffectSpec`'s role for full-screen color
 /// flashes, but jostling the view instead of tinting it.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CameraShakeSpec {

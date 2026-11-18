@@ -4,7 +4,7 @@
 //! instead of in every consumer after merge.
 
 #[allow(unused_imports)]
-use engine::{glam, glow, sdl2, ui::egui};
+use dust_engine::{glam, glow, sdl2, ui::egui};
 
 #[test]
 fn downstream_reexports_resolve() {

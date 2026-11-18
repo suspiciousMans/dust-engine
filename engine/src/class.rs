@@ -8,7 +8,7 @@ use crate::level::{AnimationSpec, MeshSource};
 /// placement (name/position/rotation stay per-instance on the
 /// `LevelObject` that references a class). Saved as its own `classes/*.ron`
 /// file, the same `load_from_file`/`save_to_file`/`load_dir` pattern as
-/// `engine::profile`'s `ShaderProfile`.
+/// `dust_engine::profile`'s `ShaderProfile`.
 ///
 /// Editing a class and clicking "Apply to All Instances" in the F2 panel
 /// re-resolves every placed instance from these fields — deliberately an

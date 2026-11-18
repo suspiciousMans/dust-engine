@@ -129,7 +129,7 @@ mod tests {
     fn tmp_dir(tag: &str) -> std::path::PathBuf {
         static N: AtomicUsize = AtomicUsize::new(0);
         let d = std::env::temp_dir().join(format!(
-            "jame_telemetry_{tag}_{}_{}",
+            "dust_telemetry_{tag}_{}_{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
@@ -185,7 +185,7 @@ mod tests {
         assert!(!t.is_enabled());
         t.record("x", &[("a", 1.0)]);
         t.flush();
-        let e = Telemetry::from_env("JAME_TELEMETRY_TEST_SURELY_UNSET_VAR");
+        let e = Telemetry::from_env("DUST_TELEMETRY_TEST_SURELY_UNSET_VAR");
         assert!(!e.is_enabled());
     }
 

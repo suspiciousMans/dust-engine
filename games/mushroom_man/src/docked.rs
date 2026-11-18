@@ -28,15 +28,15 @@
 //!
 //! Everything here is reachable only when `editor_available()` is true.
 
-use engine::editor::bounds::{Aabb, LocalBounds};
-use engine::editor::hierarchy::{Primitive, PrimitiveShape};
-use engine::editor::runtime::EditorRuntime;
-use engine::editor::scene_io::{NullSnapshot, SceneIo};
-use engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
-use engine::editor::state::EditorMode as ShellMode;
-use engine::editor::{Locked, Name, Registry};
-use engine::glam::EulerRot;
-use engine::ui::EditorTab;
+use dust_engine::editor::bounds::{Aabb, LocalBounds};
+use dust_engine::editor::hierarchy::{Primitive, PrimitiveShape};
+use dust_engine::editor::runtime::EditorRuntime;
+use dust_engine::editor::scene_io::{NullSnapshot, SceneIo};
+use dust_engine::editor::shell::{PerfSnapshot, ShellEvent, ShellHost};
+use dust_engine::editor::state::EditorMode as ShellMode;
+use dust_engine::editor::{Locked, Name, Registry};
+use dust_engine::glam::EulerRot;
+use dust_engine::ui::EditorTab;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -66,7 +66,7 @@ pub struct DockedState {
     show_net: bool,
     drawable: (u32, u32),
     picked_texture: Option<PathBuf>,
-    net_actions: (Option<engine::ui::MultiplayerAction>, Option<engine::ui::AppearanceAction>),
+    net_actions: (Option<dust_engine::ui::MultiplayerAction>, Option<dust_engine::ui::AppearanceAction>),
     /// File-menu requests from [`GameSceneIo`], applied after the UI pass.
     scene: Rc<RefCell<SceneBridge>>,
     /// Window close while the editor is open: ask the shell first (unsaved
@@ -133,7 +133,7 @@ impl SceneIo for GameSceneIo {
 
     fn open(&mut self, path: &Path, _: &mut World) -> Result<(), String> {
         let path = self.resolve(path);
-        let level = engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        let level = dust_engine::level::load_from_file(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
         let mut shared = self.shared.borrow_mut();
         shared.named = Some(level.name.clone());
         shared.current = Some(path.clone());
@@ -503,7 +503,7 @@ impl Sandbox {
         match self.docked.rt.as_ref() {
             Some(rt) => (rt.shell.camera.view_matrix(), rt.shell.camera.projection_matrix(aspect)),
             None => {
-                let camera = engine::editor::camera::EditorCamera::default();
+                let camera = dust_engine::editor::camera::EditorCamera::default();
                 (camera.view_matrix(), camera.projection_matrix(aspect))
             }
         }
@@ -815,11 +815,11 @@ impl Sandbox {
                 // Leave a texture pick the browser is waiting for untouched.
                 let waiting = self.pending_texture_pick.replace(pick);
                 self.push_undo_snapshot();
-                let relative = engine::level::relativize(path, &self.asset_root);
+                let relative = dust_engine::level::relativize(path, &self.asset_root);
                 self.apply_ui_actions(ctx, Some(relative), None, None, None);
                 self.pending_texture_pick = waiting;
             }
-            "ron" => match engine::level::load_from_file(path) {
+            "ron" => match dust_engine::level::load_from_file(path) {
                 Ok(level) => {
                     self.docked_open_level(ctx, level, path);
                     rt.shell.console.info(format!("loaded level {}", path.display()));
@@ -875,7 +875,7 @@ impl Sandbox {
                     if let Some(name) = path.file_stem() {
                         level.name = name.to_string_lossy().into_owned();
                     }
-                    match engine::level::save_to_file(&level, &path) {
+                    match dust_engine::level::save_to_file(&level, &path) {
                         Ok(()) => {
                             self.current_level_name = level.name.clone();
                             self.cache_level(level);
@@ -963,7 +963,7 @@ impl Sandbox {
     pub(crate) fn draw_net_panels(
         &mut self,
         egui_ctx: &egui::Context,
-    ) -> (Option<engine::ui::MultiplayerAction>, Option<engine::ui::AppearanceAction>) {
+    ) -> (Option<dust_engine::ui::MultiplayerAction>, Option<dust_engine::ui::AppearanceAction>) {
         // Every currently-loaded rig, by name, for the appearance panel's
         // picker list; the local player's own chosen appearance (if any),
         // resolved to that same name for highlighting the current
@@ -989,7 +989,7 @@ impl Sandbox {
         } else {
             Vec::new()
         };
-        let multiplayer = engine::ui::draw_multiplayer_panel(
+        let multiplayer = dust_engine::ui::draw_multiplayer_panel(
             egui_ctx,
             &net_status_text,
             net_connected,
@@ -999,7 +999,7 @@ impl Sandbox {
             &net_players,
         );
         let appearance =
-            engine::ui::draw_appearance_panel(egui_ctx, current_appearance_name.as_deref(), &appearance_rig_names);
+            dust_engine::ui::draw_appearance_panel(egui_ctx, current_appearance_name.as_deref(), &appearance_rig_names);
         (multiplayer, appearance)
     }
 
@@ -1010,8 +1010,8 @@ impl Sandbox {
         ctx: &mut Context,
         picked_texture: Option<PathBuf>,
         pause_menu_action: Option<PauseMenuAction>,
-        multiplayer_action: Option<engine::ui::MultiplayerAction>,
-        appearance_action: Option<engine::ui::AppearanceAction>,
+        multiplayer_action: Option<dust_engine::ui::MultiplayerAction>,
+        appearance_action: Option<dust_engine::ui::AppearanceAction>,
     ) {
         let gl = ctx.gl();
         if let Some(path) = picked_texture {
@@ -1068,20 +1068,20 @@ impl Sandbox {
         }
 
         match multiplayer_action {
-            Some(engine::ui::MultiplayerAction::Host) => self.start_hosting(),
-            Some(engine::ui::MultiplayerAction::Join) => self.join_game(),
-            Some(engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
-            Some(engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
+            Some(dust_engine::ui::MultiplayerAction::Host) => self.start_hosting(),
+            Some(dust_engine::ui::MultiplayerAction::Join) => self.join_game(),
+            Some(dust_engine::ui::MultiplayerAction::Disconnect) => self.disconnect_net(),
+            Some(dust_engine::ui::MultiplayerAction::SetLevelSwitchPermission { net_id, allowed }) => {
                 self.set_level_switch_permission(net_id, allowed);
             }
-            Some(engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
+            Some(dust_engine::ui::MultiplayerAction::CancelReconnect) => self.cancel_reconnect(),
             None => {}
         }
 
         match appearance_action {
-            Some(engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
-            Some(engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
-            Some(engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
+            Some(dust_engine::ui::AppearanceAction::ImportNewModel) => self.pick_new_appearance_model(),
+            Some(dust_engine::ui::AppearanceAction::SelectExisting(index)) => self.select_appearance(index),
+            Some(dust_engine::ui::AppearanceAction::ResetToDefault) => self.reset_appearance(),
             None => {}
         }
     }
@@ -1142,7 +1142,7 @@ impl ShellHost for DockHost<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::editor::state::EditorState;
+    use dust_engine::editor::state::EditorState;
 
     fn meta(name: &str) -> LevelObjectMeta {
         LevelObjectMeta {
@@ -1384,7 +1384,7 @@ mod tests {
         assert!(shared.borrow().ops.is_empty());
 
         let level = Level { name: "cave".into(), ..Default::default() };
-        engine::level::save_to_file(&level, &dir.join("cave.ron")).unwrap();
+        dust_engine::level::save_to_file(&level, &dir.join("cave.ron")).unwrap();
         io.open(Path::new("cave"), &mut world).unwrap();
         assert_eq!(io.current_path(), Some(dir.join("cave.ron").as_path()));
         assert!(matches!(&shared.borrow().ops[..], [SceneOp::Open { level, .. }] if level.name == "cave"));
@@ -1410,8 +1410,8 @@ mod tests {
 
     #[test]
     fn viewport_picking_finds_level_objects_but_not_rig_parts() {
-        use engine::editor::cam_matrices::Ray;
-        use engine::editor::picking::pick_nearest;
+        use dust_engine::editor::cam_matrices::Ray;
+        use dust_engine::editor::picking::pick_nearest;
         let mut world = World::new();
         let mut seen = HashSet::new();
         // A light-like level object (no mesh): picked by its icon sphere.

@@ -5,7 +5,7 @@
 //! fly-look rotates *in place* (the eye stays, the pivot is re-derived), so
 //! switching between the two never makes the view jump.
 //!
-//! Conventions match `engine::camera::OrbitCamera` (yaw 0 = eye on +Z looking
+//! Conventions match `dust_engine::camera::OrbitCamera` (yaw 0 = eye on +Z looking
 //! toward -Z, Y up), so scenes look the same through either camera.
 //!
 //! Navigation is driven by a per-frame [`CameraInput`] snapshot and the

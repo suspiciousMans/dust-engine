@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use engine::hud::HudState;
-use engine::ui_designer::examples::{self, publish_hud, publish_pause_menu};
-use engine::ui_designer::{ReloadStatus, UiBindings, UiEvent, UiScreen, UiValue};
+use dust_engine::hud::HudState;
+use dust_engine::ui_designer::examples::{self, publish_hud, publish_pause_menu};
+use dust_engine::ui_designer::{ReloadStatus, UiBindings, UiEvent, UiScreen, UiValue};
 
 /// What the player asked for through the pause menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,11 +135,11 @@ mod tests {
     #[test]
     fn every_event_in_the_shipped_pause_menu_is_handled() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let doc = engine::ui_designer::load_doc(&ui_dir(root).join("pause_menu.ron")).expect("pause_menu.ron parses");
+        let doc = dust_engine::ui_designer::load_doc(&ui_dir(root).join("pause_menu.ron")).expect("pause_menu.ron parses");
         let mut names = Vec::new();
         doc.root.walk(&mut |n| match &n.kind {
-            engine::ui_designer::NodeKind::Button { on_click: Some(e), .. } => names.push(e.clone()),
-            engine::ui_designer::NodeKind::Toggle { on_toggle: Some(e), .. } => names.push(e.clone()),
+            dust_engine::ui_designer::NodeKind::Button { on_click: Some(e), .. } => names.push(e.clone()),
+            dust_engine::ui_designer::NodeKind::Toggle { on_toggle: Some(e), .. } => names.push(e.clone()),
             _ => {}
         });
         assert_eq!(names.len(), 5, "{names:?}");
@@ -152,15 +152,15 @@ mod tests {
     fn shipped_hud_parses_and_binds_published_names() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let ui = GameUi::new(root);
-        assert_eq!(ui.hud.source(), engine::ui_designer::ScreenSource::File, "{:?}", ui.hud.last_error());
-        assert_eq!(ui.pause.source(), engine::ui_designer::ScreenSource::File, "{:?}", ui.pause.last_error());
+        assert_eq!(ui.hud.source(), dust_engine::ui_designer::ScreenSource::File, "{:?}", ui.hud.last_error());
+        assert_eq!(ui.pause.source(), dust_engine::ui_designer::ScreenSource::File, "{:?}", ui.pause.last_error());
     }
 
     fn snapshot<'a>(hud: &'a HudState, docked: bool) -> UiSnapshot<'a> {
         UiSnapshot { hud, level_name: "default", dt: 1.0 / 60.0, net_active: false, net_status: "Offline", editor_available: true, paused: false, docked }
     }
 
-    fn node_named(doc: &engine::ui_designer::UiDoc, name: &str) -> engine::ui_designer::UiNode {
+    fn node_named(doc: &dust_engine::ui_designer::UiDoc, name: &str) -> dust_engine::ui_designer::UiNode {
         let mut found = None;
         doc.root.walk(&mut |n| {
             if n.name == name {
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn hud_shows_health_toast_and_hint_from_published_state() {
-        use engine::ui_designer::{resolve_classes, resolve_text, solve, LayoutParams};
+        use dust_engine::ui_designer::{resolve_classes, resolve_text, solve, LayoutParams};
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut ui = GameUi::new(root);
         let mut hud = HudState::default();
