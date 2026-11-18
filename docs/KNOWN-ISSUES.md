@@ -80,5 +80,4 @@ Status per feature in `engine/src/physics/`. "tested" = a unit test in the modul
 
 ## Naming
 
-The project is still called Dust in code, paths and docs. The rename to Dust
-is the last stage and waits on four owner decisions listed in the plan.
+Renamed from Jame Engine to Dust Engine (tag `v0.1.0-dust`): crate `dust_engine`, env var `DUST_TUNABLES`. See `CHANGELOG.md`.

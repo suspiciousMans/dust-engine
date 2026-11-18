@@ -2,7 +2,7 @@
 
 Status: **implemented and the only scripting system** (plan: Stage 5 item 4). The `.pss` interpreter, `ScriptBehavior`,
 `testkit::SmokeTestHost`, the `legacy-pss` feature and `tools/script_editor` were removed (owner decision 2026-11-11).
-Engine name stays "Dust" until Stage 6; paths below will move with the rename.
+The engine was renamed from Jame to Dust (`v0.1.0-dust`); the repo directory is `dust-engine`.
 
 ## 1. What Oxidized is today (measured, not assumed)
 
