@@ -2875,23 +2875,6 @@ user in a *debug* build — ship to a user-writable folder (Desktop,
 anyway since the editor (and its writes) aren't reachable there at all.
 
 
-## Turn-based multiplayer (`dust_engine::turn`)
-
-For board and card games. Host-authoritative action log: implement `TurnGame`
-(`State`, `Action`, pure `validate` and `apply`), then run a `TurnHost` on one
-machine and a `TurnClient` on the others. Clients `submit` an action; the host
-validates, applies, numbers it and broadcasts it; every peer applies the same
-actions in the same order. A client that detects a gap in the sequence asks for
-a `Resync`. `apply` must be deterministic: roll dice on the host with
-`TurnHost::submit_with` and put the result in the action.
-
-The module does no I/O itself. A `TurnLink` moves bytes: `net::NetConnection`
-(TCP) implements it, `MemoryLink::pair()` gives an in-process pair for tests or
-hot-seat/AI seats, and a WebSocket link for the web build only needs `send`,
-`pump` and `is_closed`. Call `host.poll()` / `client.poll()` once per frame and
-react to the returned `TurnEvent`s.
-
-
 ## Web (emscripten) build
 
 Tested path: Rust `wasm32-unknown-emscripten` + emsdk 3.1.74, SDL2 from
