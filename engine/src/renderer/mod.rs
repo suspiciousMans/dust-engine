@@ -7,7 +7,7 @@ mod shadow_math;
 mod shadow_shader;
 mod skybox;
 
-pub use framebuffer::OffscreenFramebuffer;
+pub use framebuffer::{OffscreenFramebuffer, TargetOptions};
 pub use grid::GridPass;
 pub use particles::ParticlePass;
 pub use post::{
@@ -37,6 +37,8 @@ pub struct Renderer {
     particles: ParticlePass,
     grid: Option<GridPass>,
     resolution_scale: f32,
+    /// How the scene target is allocated (HDR / MSAA / filtering).
+    target_options: TargetOptions,
     /// Vignette + grain applied by the composite pass (see `ScreenOverlay`).
     overlay: Option<ScreenOverlay>,
     /// Tracers: 0 = off. See `set_trails`.
@@ -78,6 +80,7 @@ impl Renderer {
             particles: ParticlePass::new(gl)?,
             grid: None,
             resolution_scale,
+            target_options: TargetOptions::default(),
             overlay: None,
             trail_amount: 0.0,
             trail: None,
@@ -240,6 +243,7 @@ impl Renderer {
         // `resize_if_needed`, which already destroys the old framebuffer).
         let mut composite = CompositePass::new(gl, post_fragment_src)?;
         composite.grain_tex = self.composite.grain_tex.take();
+        composite.exposure = self.composite.exposure;
         unsafe {
             self.composite.destroy(gl);
         }
@@ -268,6 +272,42 @@ impl Renderer {
         self.resolution_scale = scale;
     }
 
+    /// Switches the scene target between the retro default and HDR / MSAA /
+    /// linear filtering (see [`TargetOptions::hifi`]). Recreates the target
+    /// now when the options changed. A GL failure keeps the old target.
+    pub fn set_target_options(
+        &mut self,
+        gl: &glow::Context,
+        options: TargetOptions,
+    ) -> anyhow::Result<()> {
+        if options == self.target_options {
+            return Ok(());
+        }
+        let (w, h) = (self.offscreen.width, self.offscreen.height);
+        let fresh = OffscreenFramebuffer::with_options(gl, w, h, options)?;
+        unsafe {
+            self.offscreen.destroy(gl);
+        }
+        self.offscreen = fresh;
+        self.target_options = options;
+        Ok(())
+    }
+
+    pub fn target_options(&self) -> TargetOptions {
+        self.target_options
+    }
+
+    /// The live scene target (to query `is_hdr` / `is_multisampled`).
+    pub fn scene_target(&self) -> &OffscreenFramebuffer {
+        &self.offscreen
+    }
+
+    /// Exposure multiplier for composite shaders that declare
+    /// `uniform float uExposure` (the built-in tonemap one does). Default 1.
+    pub fn set_exposure(&mut self, exposure: f32) {
+        self.composite.exposure = exposure.max(0.0);
+    }
+
     /// Recreates the offscreen target if the window size or resolution scale
     /// changed since the last frame. Cheap no-op otherwise.
     pub fn resize_if_needed(
@@ -280,7 +320,7 @@ impl Renderer {
             unsafe {
                 self.offscreen.destroy(gl);
             }
-            self.offscreen = OffscreenFramebuffer::new(gl, w, h)?;
+            self.offscreen = OffscreenFramebuffer::with_options(gl, w, h, self.target_options)?;
         }
         Ok(())
     }
@@ -327,6 +367,7 @@ impl Renderer {
         window_drawable_size: (u32, u32),
         post_params: &PostParams,
     ) {
+        self.offscreen.resolve(gl);
         let source = self.apply_trails(gl);
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, target.map(|t| t.raw()));

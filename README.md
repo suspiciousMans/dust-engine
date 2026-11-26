@@ -32,7 +32,7 @@ being reworked, so check there if a key differs. Release builds have no editor.
 
 ## What's in it
 
-- **Render pipeline** — low-res offscreen framebuffer, per-vertex lighting/fog,
+- **Render pipeline** — opt-in hi-fi path (HDR, MSAA, per-pixel PBR, ACES tonemap; see GUIDE.md), plus the low-res offscreen framebuffer, per-vertex lighting/fog,
   vertex snapping, affine texture mapping, posterize/dither post-process,
   skybox, backface culling — all as savable, hot-swappable shader profiles
 - **ECS** (`hecs`) with a legacy level editor GUI (F2) for placing/editing
