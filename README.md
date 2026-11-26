@@ -43,6 +43,7 @@ being reworked, so check there if a key differs. Release builds have no editor.
   (`Lifetime`/`Fade`/`TextureOverride`), named audio tracks, `Tunables` and
   `Telemetry`, input action maps, skeletal animation, and a headless test
   harness (see GUIDE.md; none of these are used by the bundled games yet)
+- **Turn-based multiplayer** (`net::turn`) — host-validated actions, per-seat hidden-information views, reconnect by token; see GUIDE.md
 - **Physics** — a small, readable RigidBody/Collider simulation (gravity,
   AABB/Sphere collision)
 - **Object classes** — share mesh/texture/physics/behavior across many

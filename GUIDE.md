@@ -259,6 +259,53 @@ frustum, so large `max_distance` softens detail), no point-light shadows, only
 meshes you submit with `shadow_draw` cast, and only programs built from
 `patch_mesh_shaders` receive.
 
+## Turn-based multiplayer (`net::turn`)
+
+For board and card games: an authoritative host checks every action with
+the game's own rules and sends each seat **its own view** of the result, so
+hidden information (a hand of cards) never leaves the host. Nothing streams
+between actions, and clients never run the rules, so they cannot desync.
+
+```rust
+use dust_engine::net::turn::{TurnRules, TurnHost, TurnClient, TcpAcceptor, connect_tcp, Seat};
+
+impl TurnRules for MyGame {
+    type Action = MyAction;          // serde
+    type View = MyView;              // what one seat may see
+    fn seats(&self) -> usize { 4 }
+    fn check(&self, seat: Seat, a: &MyAction) -> Result<(), String> { /* legal? */ }
+    fn apply(&mut self, seat: Seat, a: &MyAction) { /* mutate */ }
+    fn view_for(&self, seat: Seat) -> MyView { /* hide others' hands */ }
+}
+
+// host
+let acceptor = TcpAcceptor::bind(7778)?;
+let mut host = TurnHost::new(game, "mygame/1.0");
+host.claim_local(0, "James")?;                  // hot-seat or bot seats
+// each frame:
+for c in acceptor.accept_new() { host.add_peer(c); }
+for ev in host.poll() { /* Joined / Left / Applied / Refused */ }
+host.submit_local(0, action)?;                  // local player or bot
+
+// client
+let mut client = TurnClient::<MyAction, MyView, _>::join(connect_tcp("192.168.1.5:7778")?, "mygame/1.0", "Sam", None);
+// each frame: for ev in client.poll() { Welcomed / Applied / Refused / ... }; client.view()
+client.submit(action);
+```
+
+* **Transport** is the `Link` trait: `NetConnection` (TCP, LAN),
+  `turn::loopback()` (an in-memory pair for tests or a local player that
+  should take the network path), or your own (a WebSocket for the browser).
+* **Reconnect**: a dropped player's seat stays theirs. `Welcomed` hands the
+  client a `token`; `TurnClient::join(.., Some(token))` takes the seat back
+  and receives the current view.
+* **Versioning**: `game_id` must match exactly (put your rules version in
+  it) and `TURN_PROTOCOL_VERSION` must match, or the host sends `Reject`.
+* `rules_mut()` + `resync()` for setup changes outside an action.
+
+No matchmaking, NAT traversal or encryption: LAN or a forwarded port, like
+the real-time `NetHost`.
+
 ## Shader profiles
 
 A `ShaderProfile` (in `dust_engine::profile`) bundles shader file paths + a
