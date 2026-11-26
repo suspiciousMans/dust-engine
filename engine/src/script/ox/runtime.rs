@@ -15,6 +15,7 @@ use super::api::{BehaviorCtx, EntityState, OxApi, OxServices};
 use super::build::compile::{build_script, BuildOptions, Toolchain};
 use super::build::diag::ScriptDiagnostics;
 use super::build::spec;
+use super::ReloadReport;
 use crate::behavior::{Behavior, ScriptApi};
 
 /// ABI value; layout must match `spec::SHIM_PRELUDE`.
@@ -312,13 +313,6 @@ impl Behavior for OxBehavior {
 }
 
 // ---------------------------------------------------------------- runtime
-
-/// Result of one (re)build, as surfaced to the editor console.
-#[derive(Clone, Debug)]
-pub struct ReloadReport {
-    pub script: String,
-    pub result: Result<(), ScriptDiagnostics>,
-}
 
 struct Watch {
     _watcher: notify::RecommendedWatcher,

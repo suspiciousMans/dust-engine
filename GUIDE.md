@@ -2823,9 +2823,7 @@ hand it to an installer builder like Inno Setup/WiX if you want a
 own game's crate name for `-Game`; if your game adds its own asset
 subfolder beyond this list, add it to the copy loop in `package.ps1` and
 `package.sh` too. On Linux/macOS the binary is `target/release/<game>` (no
-`.exe`); `package.sh` also honours `CARGO_TARGET_DIR`. There is no web
-packaging: building for `wasm32-unknown-emscripten` is not documented in this
-repo beyond cfg-gated code paths, so neither script has a web mode.
+`.exe`); `package.sh` also honours `CARGO_TARGET_DIR`. Web packaging is separate: see "Web (emscripten) build" below.
 
 A few things make this work, already wired up for every game in the workspace:
 
@@ -2875,3 +2873,47 @@ admin rights (e.g. `Program Files`), those writes will fail for a normal
 user in a *debug* build — ship to a user-writable folder (Desktop,
 `Documents`, a portable zip), which is moot for a real `--release` shipment
 anyway since the editor (and its writes) aren't reachable there at all.
+
+
+## Turn-based multiplayer (`dust_engine::turn`)
+
+For board and card games. Host-authoritative action log: implement `TurnGame`
+(`State`, `Action`, pure `validate` and `apply`), then run a `TurnHost` on one
+machine and a `TurnClient` on the others. Clients `submit` an action; the host
+validates, applies, numbers it and broadcasts it; every peer applies the same
+actions in the same order. A client that detects a gap in the sequence asks for
+a `Resync`. `apply` must be deterministic: roll dice on the host with
+`TurnHost::submit_with` and put the result in the action.
+
+The module does no I/O itself. A `TurnLink` moves bytes: `net::NetConnection`
+(TCP) implements it, `MemoryLink::pair()` gives an in-process pair for tests or
+hot-seat/AI seats, and a WebSocket link for the web build only needs `send`,
+`pump` and `is_closed`. Call `host.poll()` / `client.poll()` once per frame and
+react to the returned `TurnEvent`s.
+
+
+## Web (emscripten) build
+
+Tested path: Rust `wasm32-unknown-emscripten` + emsdk 3.1.74, SDL2 from
+emscripten's port, WebGL2 (GLES 3.0).
+
+```
+rustup target add wasm32-unknown-emscripten
+source /path/to/emsdk/emsdk_env.sh
+web/build.sh dust_engine hifi_showcase      # or: web/build.sh <game-package>
+python3 -m http.server -d dist-web/hifi_showcase   # open /index.html?app=hifi_showcase
+node tools/web_smoke.js dist-web/hifi_showcase hifi_showcase out.png   # headless check
+```
+
+Linker flags live in `.cargo/config.toml` under `[target.wasm32-unknown-emscripten]`.
+If emcc cannot download the SDL2 port (restricted network), clone
+`libsdl-org/SDL` at tag `release-2.30.9` and set `EMCC_LOCAL_PORTS="sdl2=<clone>"`.
+
+What differs on the web: no `.ox` hot-reload or `--smoke-test` (those need
+`libloading`/`notify`, so `script::ox::{runtime,smoke,host}` and
+`App::run_scripted` are native-only; Oxidized rules transpiled at build time
+via `build.rs` work normally); no `hotreload` or TCP `net` module (use
+`turn::TurnLink` with a WebSocket for multiplayer); shaders are rewritten to
+GLSL ES 3.00 automatically. Bundle assets with `DUST_PRELOAD="assets levels"`.
+`tools/web_smoke.js` loads the build in headless Chromium (software WebGL),
+fails on JS errors or a blank canvas, and can save a screenshot.

@@ -5,3 +5,10 @@
 # now-reserved bool/true/false keywords.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 CFLAGS = "-std=gnu11"
+
+# Web build: `cargo build --release --target wasm32-unknown-emscripten` with the
+# emsdk on PATH. SDL2 comes from emscripten's port; WebGL2 = GLES 3.0.
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "link-args=-sUSE_SDL=2 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=134217728 -sEXIT_RUNTIME=0",
+]

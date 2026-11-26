@@ -8,6 +8,7 @@ use sdl2::event::Event;
 
 use crate::input::Input;
 use crate::platform::Platform;
+#[cfg(not(target_os = "emscripten"))]
 use crate::script::ox::SmokeDriver;
 use crate::time::Time;
 
@@ -173,6 +174,7 @@ impl App {
     /// `Ok(1)` (fail) — once the script calls `finish(...)`, an assertion
     /// fails, the script panics, or the window is closed without any of those
     /// (treated as a failure: the test never finished).
+    #[cfg(not(target_os = "emscripten"))]
     pub fn run_scripted<G: Game>(
         title: &str,
         width: u32,
