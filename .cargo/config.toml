@@ -5,3 +5,15 @@
 # now-reserved bool/true/false keywords.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 CFLAGS = "-std=gnu11"
+
+# Browser build (WebGL2 via SDL2's emscripten port). See docs/WEB.md.
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "link-arg=-sUSE_SDL=2",
+    "-C", "link-arg=-sUSE_SDL_MIXER=2",
+    "-C", "link-arg=-sMIN_WEBGL_VERSION=2",
+    "-C", "link-arg=-sMAX_WEBGL_VERSION=2",
+    "-C", "link-arg=-sFULL_ES3=1",
+    "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+    "-C", "link-arg=-sSTACK_SIZE=4MB",
+]

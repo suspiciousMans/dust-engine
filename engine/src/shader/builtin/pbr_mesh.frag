@@ -142,5 +142,9 @@ void main() {
     color += vBakedLight * albedo;
     color += uEmissive;
 
+    // A degenerate normal or a grazing GGX lobe can produce NaN/inf on
+    // some GPUs (seen as white specks after the MSAA resolve on WebGL).
+    if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
+    color = min(color, vec3(64.0));
     FragColor = vec4(mix(color, uFogColor, vFogFactor), alpha);
 }

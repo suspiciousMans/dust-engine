@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b10; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  #status { position: fixed; left: 16px; bottom: 16px; color: #aab; font: 14px system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<div id="status">Loading…</div>
+<script>
+  // Emscripten reads this object before the game's JS runs.
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: function (t) { console.log(t); },
+    printErr: function (t) { console.warn(t); },
+    setStatus: function (t) {
+      var el = document.getElementById('status');
+      el.textContent = t;
+      el.style.display = t ? 'block' : 'none';
+    },
+    onRuntimeInitialized: function () { Module.setStatus(''); },
+  };
+  window.addEventListener('error', function (e) { Module.setStatus('Error: ' + e.message); });
+</script>
+<script async src="__GAME__.js"></script>
+</body>
+</html>

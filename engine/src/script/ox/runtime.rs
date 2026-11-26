@@ -5,7 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(not(target_os = "emscripten"))]
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -439,6 +441,17 @@ impl OxRuntime {
 
     /// Starts watching the scripts dir (notify). Call `poll()` each frame.
     pub fn start_watching(&mut self) -> Result<(), String> {
+        // No file system to watch and no threads in the browser build.
+        #[cfg(target_os = "emscripten")]
+        {
+            return Err("script hot reload is not available in the web build".into());
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        self.start_watching_native()
+    }
+
+    #[cfg(not(target_os = "emscripten"))]
+    fn start_watching_native(&mut self) -> Result<(), String> {
         use notify::{RecursiveMode, Watcher};
         let (tx, rx) = channel::<PathBuf>();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {

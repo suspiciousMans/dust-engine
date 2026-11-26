@@ -23,6 +23,10 @@ egui_glow.workspace = true
 egui_dock.workspace = true
 gltf.workspace = true
 bincode.workspace = true
+# Script hot reload (dlopen + file watching). Both compile for emscripten;
+# there they only ever report "not available" at runtime.
+notify.workspace = true
+libloading = "0.8"
 
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
 # Vendor SDL2 wherever a system copy can't be assumed (Windows, CI, Linux
@@ -30,8 +34,6 @@ bincode.workspace = true
 # excluded from this table.
 sdl2 = { workspace = true, features = ["bundled", "static-link"] }
 rodio.workspace = true
-notify.workspace = true
-libloading = "0.8"
 
 [dev-dependencies]
 env_logger.workspace = true
