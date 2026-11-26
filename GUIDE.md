@@ -259,6 +259,57 @@ frustum, so large `max_distance` softens detail), no point-light shadows, only
 meshes you submit with `shadow_draw` cast, and only programs built from
 `patch_mesh_shaders` receive.
 
+## Hi-fi rendering (opt-in)
+
+For a clean modern look instead of the PS2 one, the engine ships a second
+render path. Nothing changes for a game that does not opt in: the default
+scene target is still RGBA8, single-sampled and `GL_NEAREST`.
+
+```rust
+use dust_engine::renderer::{patch_mesh_shaders, Renderer, ShadowSettings, TargetOptions};
+use dust_engine::shader::builtin::{PbrMaterial, PointLight, SceneLighting};
+use dust_engine::shader::{ShaderVariantCache, PBR_MESH_FRAG, PBR_MESH_VERT, TONEMAP_COMPOSITE_FRAG};
+
+let mut renderer = Renderer::new(gl, size, 1.0, TONEMAP_COMPOSITE_FRAG)?;
+renderer.set_target_options(gl, TargetOptions::hifi())?; // HDR + 4x MSAA + linear
+renderer.set_shadow_settings(gl, ShadowSettings::smooth());
+renderer.set_exposure(1.0);
+let (v, f) = patch_mesh_shaders(PBR_MESH_VERT, PBR_MESH_FRAG, "FragColor")?;
+let mut pbr = ShaderVariantCache::new(v, f);
+
+// each frame, after the shadow pass and begin_scene:
+let program = pbr.get_or_compile(gl, 0)?;
+renderer.bind_shadows(gl, program);
+lighting.upload(gl, program, camera_pos);        // SceneLighting
+// set uView / uProj, then per draw: uModel + PbrMaterial::upload
+```
+
+* **`TargetOptions`** (`renderer::framebuffer`): `hdr` (RGBA16F, falls back
+  to RGBA8 with a warning), `samples` (MSAA, resolved in `present`), `linear`
+  (smooth upscale). `retro()` is the default, `hifi()` turns all three on.
+  `Renderer::set_target_options` recreates the target; `scene_target()`
+  reports what the driver actually gave (`is_hdr`, `is_multisampled`).
+* **`PBR_MESH_VERT` / `PBR_MESH_FRAG`**: per-pixel GGX + Lambert with
+  roughness/metallic, sRGB base texture, optional tangent-space normal map
+  (no tangents needed, frame from derivatives), optional glTF metal/rough
+  map, emissive, sky/ground hemisphere ambient with a matching cheap
+  specular, one sun, up to 8 point lights (`MAX_POINT_LIGHTS`), linear fog.
+  Same attribute layout as every Dust mesh, `AFFINE_UV` and `INSTANCED`
+  variants, and it passes the shadow patcher's contract.
+* **`TONEMAP_COMPOSITE_FRAG`**: exposure (`Renderer::set_exposure`, uniform
+  `uExposure`), ACES filmic curve, sRGB encode, the damage-flash tint, and the
+  usual posterize/dither uniforms (off at `PostParams::default()`).
+* **Primitives**: `mesh::primitives::uv_sphere` and `cylinder` join `cube`,
+  `plane` and `quad`.
+
+Demo: `cargo run -p dust_engine --example hifi_showcase` (R toggles the
+retro target). `DUST_SCREENSHOT=out.png` saves the third frame and exits,
+which also works headless under `xvfb-run`.
+
+Limits: the sun's shadow darkens the whole fragment (ambient included);
+there is no image-based lighting or bloom yet; tracers (`set_trails`) blend
+through RGBA8 targets, so they clip HDR highlights.
+
 ## Turn-based multiplayer (`net::turn`)
 
 For board and card games: an authoritative host checks every action with

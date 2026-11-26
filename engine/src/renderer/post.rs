@@ -38,6 +38,9 @@ pub struct CompositePass {
     uniform_tint_strength: Option<glow::UniformLocation>,
     overlay: OverlayLocs,
     pub(crate) grain_tex: Option<glow::Texture>,
+    uniform_exposure: Option<glow::UniformLocation>,
+    /// Uploaded to `uExposure` when the shader declares it.
+    pub(crate) exposure: f32,
 }
 
 /// Uniform locations of the optional overlay (all `None` in shaders without it).
@@ -124,6 +127,8 @@ impl CompositePass {
         Ok(Self {
             overlay,
             grain_tex: None,
+            uniform_exposure: loc("uExposure"),
+            exposure: 1.0,
             program,
             empty_vao,
             uniform_source_tex,
@@ -194,6 +199,7 @@ impl CompositePass {
                 params.tint_color[2],
             );
             gl.uniform_1_f32(self.uniform_tint_strength.as_ref(), params.tint_strength);
+            gl.uniform_1_f32(self.uniform_exposure.as_ref(), self.exposure);
             let o = &self.overlay;
             match overlay.filter(|_| o.on.is_some()) {
                 Some(ov) => {

@@ -32,3 +32,6 @@ sdl2 = { workspace = true, features = ["bundled", "static-link"] }
 rodio.workspace = true
 notify.workspace = true
 libloading = "0.8"
+
+[dev-dependencies]
+env_logger.workspace = true
