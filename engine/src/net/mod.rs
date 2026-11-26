@@ -626,3 +626,15 @@ mod tests {
         assert_eq!(host.player_count(), MAX_PLAYERS, "still full, not full+1");
     }
 }
+
+impl crate::turn::TurnLink for NetConnection {
+    fn send<T: serde::Serialize>(&mut self, msg: &T) {
+        NetConnection::send(self, msg)
+    }
+    fn pump<T: serde::de::DeserializeOwned>(&mut self) -> Vec<T> {
+        NetConnection::pump(self)
+    }
+    fn is_closed(&self) -> bool {
+        self.is_disconnected()
+    }
+}

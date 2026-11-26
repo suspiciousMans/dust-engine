@@ -36,6 +36,7 @@ pub mod skeletal;
 pub mod telemetry;
 pub mod texture;
 pub mod time;
+pub mod turn;
 pub mod tilemap;
 pub mod tunables;
 pub mod ui;
