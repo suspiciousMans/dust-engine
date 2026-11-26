@@ -2870,9 +2870,7 @@ hand it to an installer builder like Inno Setup/WiX if you want a
 own game's crate name for `-Game`; if your game adds its own asset
 subfolder beyond this list, add it to the copy loop in `package.ps1` and
 `package.sh` too. On Linux/macOS the binary is `target/release/<game>` (no
-`.exe`); `package.sh` also honours `CARGO_TARGET_DIR`. There is no web
-packaging: building for `wasm32-unknown-emscripten` is not documented in this
-repo beyond cfg-gated code paths, so neither script has a web mode.
+`.exe`); `package.sh` also honours `CARGO_TARGET_DIR`. Web packaging is separate: see "Web (emscripten) build" below.
 
 A few things make this work, already wired up for every game in the workspace:
 
@@ -2922,3 +2920,34 @@ admin rights (e.g. `Program Files`), those writes will fail for a normal
 user in a *debug* build — ship to a user-writable folder (Desktop,
 `Documents`, a portable zip), which is moot for a real `--release` shipment
 anyway since the editor (and its writes) aren't reachable there at all.
+
+
+## Web (emscripten) build
+
+Tested path: Rust `wasm32-unknown-emscripten` + emsdk 3.1.74, SDL2 from
+emscripten's port, WebGL2 (GLES 3.0).
+
+```
+rustup target add wasm32-unknown-emscripten
+source /path/to/emsdk/emsdk_env.sh
+./package_web.sh --example hifi_showcase   # or: ./package_web.sh <game>   (add --serve)
+node tools/web_smoke.js dist/web/hifi_showcase hifi_showcase out.png   # headless check
+```
+
+Linker flags live in `.cargo/config.toml` under `[target.wasm32-unknown-emscripten]`.
+If emcc cannot download its ports (restricted network, HTTP 403), clone them and
+drop each into emsdk's `cache/ports/<name>/<Subdir>` with a `.emscripten_url`
+marker holding the port's zip URL: `sdl2` (libsdl-org/SDL, `release-2.30.9`, subdir
+`SDL-release-2.30.9`), `sdl2_mixer` (libsdl-org/SDL_mixer, `release-2.8.0`,
+`SDL_mixer-release-2.8.0`), `ogg` and `vorbis` (emscripten-ports, `version_1`,
+`Ogg-version_1` / `Vorbis-version_1`). The audio engine uses SDL_mixer on the web,
+so the mixer port is linked.
+
+What differs on the web: no `.ox` hot-reload or `--smoke-test` (those need
+`libloading`/`notify`, so `script::ox::{runtime,smoke,host}` and
+`App::run_scripted` are native-only; Oxidized rules transpiled at build time
+via `build.rs` work normally); no `hotreload` or TCP `net` module (use
+`turn::TurnLink` with a WebSocket for multiplayer); shaders are rewritten to
+GLSL ES 3.00 automatically. `package_web.sh <game>` preloads the game's asset folders into the virtual file system at `/assets`, `/profiles`, ...; resolve the asset root with `platform::asset_root(env!("CARGO_MANIFEST_DIR"))`, which returns `/` on the web.
+`tools/web_smoke.js` loads the build in headless Chromium (software WebGL),
+fails on JS errors or a blank canvas, and can save a screenshot.

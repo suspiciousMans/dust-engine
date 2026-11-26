@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d12;color:#cbd5e1;font:14px system-ui}
+  canvas{display:block;width:100vw;height:100vh;outline:none}
+  #status{position:fixed;left:12px;top:12px}
+</style>
+<div id="status">Loading…</div>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<script>
+  // ?app=<name> picks which built game to load (default: the file name in data-app).
+  const app = new URLSearchParams(location.search).get('app') || '__GAME__';
+  window.DUST = { ready: false, errors: [] };
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: t => console.log(t),
+    printErr: t => { console.warn(t); },
+    onRuntimeInitialized() { window.DUST.ready = true; document.getElementById('status').remove(); },
+    onAbort(w) { window.DUST.errors.push('abort: ' + w); },
+  };
+  window.addEventListener('error', e => window.DUST.errors.push(String(e.message)));
+  const s = document.createElement('script'); s.src = app + '.js'; document.body.appendChild(s);
+</script>
