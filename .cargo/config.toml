@@ -10,5 +10,5 @@ CFLAGS = "-std=gnu11"
 # emsdk on PATH. SDL2 comes from emscripten's port; WebGL2 = GLES 3.0.
 [target.wasm32-unknown-emscripten]
 rustflags = [
-    "-C", "link-args=-sUSE_SDL=2 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=134217728 -sEXIT_RUNTIME=0",
+    "-C", "link-args=-sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSTACK_SIZE=4MB -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=134217728 -sEXIT_RUNTIME=0",
 ]

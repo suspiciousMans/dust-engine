@@ -2930,20 +2930,24 @@ emscripten's port, WebGL2 (GLES 3.0).
 ```
 rustup target add wasm32-unknown-emscripten
 source /path/to/emsdk/emsdk_env.sh
-web/build.sh dust_engine hifi_showcase      # or: web/build.sh <game-package>
-python3 -m http.server -d dist-web/hifi_showcase   # open /index.html?app=hifi_showcase
-node tools/web_smoke.js dist-web/hifi_showcase hifi_showcase out.png   # headless check
+./package_web.sh --example hifi_showcase   # or: ./package_web.sh <game>   (add --serve)
+node tools/web_smoke.js dist/web/hifi_showcase hifi_showcase out.png   # headless check
 ```
 
 Linker flags live in `.cargo/config.toml` under `[target.wasm32-unknown-emscripten]`.
-If emcc cannot download the SDL2 port (restricted network), clone
-`libsdl-org/SDL` at tag `release-2.30.9` and set `EMCC_LOCAL_PORTS="sdl2=<clone>"`.
+If emcc cannot download its ports (restricted network, HTTP 403), clone them and
+drop each into emsdk's `cache/ports/<name>/<Subdir>` with a `.emscripten_url`
+marker holding the port's zip URL: `sdl2` (libsdl-org/SDL, `release-2.30.9`, subdir
+`SDL-release-2.30.9`), `sdl2_mixer` (libsdl-org/SDL_mixer, `release-2.8.0`,
+`SDL_mixer-release-2.8.0`), `ogg` and `vorbis` (emscripten-ports, `version_1`,
+`Ogg-version_1` / `Vorbis-version_1`). The audio engine uses SDL_mixer on the web,
+so the mixer port is linked.
 
 What differs on the web: no `.ox` hot-reload or `--smoke-test` (those need
 `libloading`/`notify`, so `script::ox::{runtime,smoke,host}` and
 `App::run_scripted` are native-only; Oxidized rules transpiled at build time
 via `build.rs` work normally); no `hotreload` or TCP `net` module (use
 `turn::TurnLink` with a WebSocket for multiplayer); shaders are rewritten to
-GLSL ES 3.00 automatically. Bundle assets with `DUST_PRELOAD="assets levels"`.
+GLSL ES 3.00 automatically. `package_web.sh <game>` preloads the game's asset folders into the virtual file system at `/assets`, `/profiles`, ...; resolve the asset root with `platform::asset_root(env!("CARGO_MANIFEST_DIR"))`, which returns `/` on the web.
 `tools/web_smoke.js` loads the build in headless Chromium (software WebGL),
 fails on JS errors or a blank canvas, and can save a screenshot.

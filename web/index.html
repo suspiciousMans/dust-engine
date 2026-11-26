@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dust (web)</title>
+<title>__TITLE__</title>
 <style>
   html,body{margin:0;height:100%;background:#0b0d12;color:#cbd5e1;font:14px system-ui}
   canvas{display:block;width:100vw;height:100vh;outline:none}
@@ -11,7 +11,7 @@
 <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
 <script>
   // ?app=<name> picks which built game to load (default: the file name in data-app).
-  const app = new URLSearchParams(location.search).get('app') || 'game';
+  const app = new URLSearchParams(location.search).get('app') || '__GAME__';
   window.DUST = { ready: false, errors: [] };
   var Module = {
     canvas: document.getElementById('canvas'),
